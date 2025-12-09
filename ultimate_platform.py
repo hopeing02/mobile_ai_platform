@@ -25,14 +25,17 @@ from flask import Flask, send_from_directory, request, jsonify, send_file
 class Config:
     SECRET_KEY = os.urandom(24)
     DEBUG = False
-    PORT = int(os.getenv('PORT', 5000))
-    HOST = '0.0.0.0'
+    PORT = int(os.getenv('PORT', 5000))  # Railway가 자동으로 PORT 설정
+    HOST = '0.0.0.0'  # Railway에서 필수
     
     OUTPUT_DIR = Path('./output')
-    CLAUDE_API_KEY = 'sk-ant-api03-여기에실제키입력'  # ← API 키 설정
     
-    if not CLAUDE_API_KEY or 'api03-여기' in CLAUDE_API_KEY:
-        CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY', os.getenv('CLAUDE_API_KEY', ''))
+    # Railway 환경변수에서 API 키 읽기
+    CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY', os.getenv('CLAUDE_API_KEY', ''))
+    
+    # 로컬 개발용 (Railway에서는 환경변수 사용)
+    if not CLAUDE_API_KEY:
+        CLAUDE_API_KEY = 'sk-ant-api03-여기에실제키입력'  # ← 로컬 개발용
     
     API_TIMEOUT = 120
     CACHE_ENABLED = True
