@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>🤖 AI 자동 개발 플랫폼 v3.0</title>
+    <meta name="theme-color" content="#667eea">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        :root {
+            --primary: #667eea;
+            --secondary: #764ba2;
+            --success: #4caf50;
+            --error: #f44336;
+            --text-primary: #333;
+            --text-secondary: #666;
+            --bg-primary: #fff;
+            --bg-secondary: #f8f9ff;
+            --border: #e0e0e0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        .header {
+            position: sticky;
+            top: 0;
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            padding: 15px 20px;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.08);
+            z-index: 1000;
+        }
+        
+        .header-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .header-subtitle {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 5px;
+        }
+        
+        .container {
+            background: var(--bg-primary);
+            border-radius: 20px 20px 0 0;
+            box-shadow: 0 -5px 30px rgba(0,0,0,0.15);
+            padding: 20px;
+            min-height: calc(100vh - 80px);
+            margin-top: 10px;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        
+        .tabs::-webkit-scrollbar { display: none; }
+        
+        .tab {
+            flex-shrink: 0;
+            padding: 12px 20px;
+            border: none;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 25px;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+        
+        .tab.active {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s;
+        }
+        
+        .tab-content.active { display: block; }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .section-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        textarea, input[type="text"], input[type="password"], input[type="file"] {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        
+        textarea {
+            min-height: 250px;
+            font-family: 'SF Mono', Monaco, monospace;
+            resize: vertical;
+        }
+        
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .hint {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 5px;
+            font-style: italic;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 18px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            color: white;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+            transition: transform 0.2s;
+        }
+        
+        .btn:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .progress-container {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: var(--bg-secondary);
+            border-radius: 15px;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary) 0%, var(--secondary) 100%);
+            transition: width 0.5s;
+        }
+        
+        .progress-message {
+            text-align: center;
+            color: var(--primary);
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .progress-step {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        
+        .result-container {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 15px;
+        }
+        
+        .result-success {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border: 2px solid var(--success);
+        }
+        
+        .result-error {
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+            border: 2px solid var(--error);
+        }
+        
+        .result-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .result-card {
+            background: white;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        
+        .result-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+        
+        .result-value {
+            font-size: 14px;
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+        
+        .example-card {
+            background: var(--bg-secondary);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            border: 2px solid var(--border);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .example-card:active {
+            transform: scale(0.98);
+            border-color: var(--primary);
+        }
+        
+        .example-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+        
+        .example-desc {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        
+        .deployment-info {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            padding: 15px;
+            border-radius: 12px;
+            margin-top: 15px;
+        }
+        
+        .deployment-info h4 {
+            color: #856404;
+            margin-bottom: 10px;
+        }
+        
+        @media (max-width: 768px) {
+            textarea, input { font-size: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-title">
+            <span>🤖</span>
+            <span>AI 자동 개발</span>
+        </div>
+        <div class="header-subtitle">프롬프트 → 완전한 앱 생성 (v3.0)</div>
+    </div>
+    
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('prompt')">✨ 프롬프트</button>
+            <button class="tab" onclick="switchTab('file')">📄 파일</button>
+            <button class="tab" onclick="switchTab('examples')">📚 예시</button>
+        </div>
+        
+        <!-- 프롬프트 탭 -->
+        <div id="prompt" class="tab-content active">
+            <div class="section-title">
+                <span>💬</span>
+                <span>어떤 앱을 만들까요?</span>
+            </div>
+            <textarea id="promptInput" placeholder="예: 영수증 사진을 찍으면 AI가 자동으로 분석하고 Google Sheets에 저장하는 앱"></textarea>
+            
+            <div style="margin: 15px 0;">
+                <label>🔑 Claude API 키 (선택)</label>
+                <input type="password" id="apiKeyPrompt" placeholder="sk-ant-api03-... (비워두면 서버 설정 사용)">
+                <div class="hint">💡 서버에 API 키가 설정되어 있으면 비워두세요</div>
+            </div>
+            
+            <button class="btn" onclick="generateFromPrompt()">🚀 앱 생성 시작</button>
+        </div>
+        
+        <!-- 파일 탭 -->
+        <div id="file" class="tab-content">
+            <div class="section-title">
+                <span>📄</span>
+                <span>요구사항 파일</span>
+            </div>
+            <input type="file" id="fileInput" accept=".md,.txt" onchange="handleFileUpload(event)">
+            <textarea id="fileContent" placeholder="또는 여기에 작성..." style="margin-top: 15px;"></textarea>
+            
+            <div style="margin: 15px 0;">
+                <label>🔑 Claude API 키 (선택)</label>
+                <input type="password" id="apiKeyFile" placeholder="sk-ant-api03-...">
+                <div class="hint">💡 서버에 API 키가 설정되어 있으면 비워두세요</div>
+            </div>
+            
+            <button class="btn" onclick="generateFromFile()">🚀 앱 생성 시작</button>
+        </div>
+        
+        <!-- 예시 탭 -->
+        <div id="examples" class="tab-content">
+            <div class="section-title">
+                <span>📚</span>
+                <span>템플릿 선택</span>
+            </div>
+            
+            <div class="example-card" onclick="loadExample('receipt')">
+                <div class="example-title">🧾 영수증 관리</div>
+                <div class="example-desc">AI로 영수증 자동 분석 및 분류</div>
+            </div>
+            
+            <div class="example-card" onclick="loadExample('todo')">
+                <div class="example-title">✅ 할 일 관리</div>
+                <div class="example-desc">드래그 앤 드롭 Todo 앱</div>
+            </div>
+            
+            <div class="example-card" onclick="loadExample('diary')">
+                <div class="example-title">📔 AI 일기장</div>
+                <div class="example-desc">감정 분석 및 월별 통계</div>
+            </div>
+            
+            <div class="example-card" onclick="loadExample('expense')">
+                <div class="example-title">💰 가계부</div>
+                <div class="example-desc">수입/지출 관리 및 예산 추적</div>
+            </div>
+        </div>
+        
+        <!-- 진행 상황 -->
+        <div id="progressContainer" class="progress-container">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <div id="progressMessage" class="progress-message">준비 중...</div>
+            <div id="progressStep" class="progress-step">0 / 7</div>
+        </div>
+        
+        <!-- 결과 -->
+        <div id="resultContainer" class="result-container"></div>
+    </div>
+    
+    <script>
+        let savedKey = localStorage.getItem('claudeApiKey') || '';
+        let sessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+        let pollInterval = null;
+        
+        if (savedKey) {
+            document.getElementById('apiKeyPrompt').value = savedKey;
+            document.getElementById('apiKeyFile').value = savedKey;
+        }
+        
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tab).classList.add('active');
+        }
+        
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    document.getElementById('fileContent').value = e.target.result;
+                };
+                reader.readAsText(file);
+            }
+        }
+        
+        function loadExample(type) {
+            const examples = {
+                receipt: "영수증 사진을 AI로 분석하고 카테고리별로 분류해서 Google Sheets에 저장하는 앱. 모바일 카메라 지원, OCR 기능, 월별 지출 통계 제공.",
+                todo: "할 일을 추가하고 완료 체크할 수 있는 Todo 앱. 드래그 앤 드롭으로 순서 변경, 우선순위 설정, Google Sheets 자동 저장.",
+                diary: "AI가 감정을 분석해주는 일기장 앱. 일기 작성 시 Claude AI가 감정 상태 분석, 월별 감정 그래프 제공.",
+                expense: "수입과 지출을 기록하는 가계부 앱. 카테고리별 분류, 예산 설정 및 추적, 월별/연별 통계."
+            };
+            
+            document.getElementById('promptInput').value = examples[type];
+            document.querySelectorAll('.tab')[0].click();
+        }
+        
+        async function generateFromPrompt() {
+            const prompt = document.getElementById('promptInput').value;
+            const apiKey = document.getElementById('apiKeyPrompt').value;
+            
+            if (!prompt.trim()) {
+                alert('프롬프트를 입력해주세요');
+                return;
+            }
+            
+            if (apiKey.trim()) {
+                localStorage.setItem('claudeApiKey', apiKey);
+            }
+            
+            await startGeneration(prompt, apiKey || null);
+        }
+        
+        async function generateFromFile() {
+            const content = document.getElementById('fileContent').value;
+            const apiKey = document.getElementById('apiKeyFile').value;
+            
+            if (!content.trim()) {
+                alert('요구사항을 입력하거나 파일을 업로드해주세요');
+                return;
+            }
+            
+            if (apiKey.trim()) {
+                localStorage.setItem('claudeApiKey', apiKey);
+            }
+            
+            await startGeneration(content, apiKey || null);
+        }
+        
+        async function startGeneration(requirements, apiKey) {
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('resultContainer').style.display = 'none';
+            document.querySelectorAll('.btn').forEach(btn => btn.disabled = true);
+            
+            document.getElementById('progressContainer').scrollIntoView({ 
+                behavior: 'smooth', 
+                block: 'center' 
+            });
+            
+            try {
+                const body = { requirements, session_id: sessionId };
+                if (apiKey) body.api_key = apiKey;
+                
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || '서버 오류');
+                }
+                
+                const data = await response.json();
+                
+                if (data.cached) {
+                    showResult(data.result);
+                    document.querySelectorAll('.btn').forEach(btn => btn.disabled = false);
+                } else {
+                    pollInterval = setInterval(checkProgress, 1000);
+                }
+                
+            } catch (error) {
+                showError('생성 실패: ' + error.message);
+                document.querySelectorAll('.btn').forEach(btn => btn.disabled = false);
+            }
+        }
+        
+        async function checkProgress() {
+            try {
+                const response = await fetch('/api/progress?session_id=' + sessionId);
+                const data = await response.json();
+                
+                const percent = Math.round((data.step / data.total) * 100);
+                document.getElementById('progressFill').style.width = percent + '%';
+                document.getElementById('progressMessage').textContent = data.message;
+                document.getElementById('progressStep').textContent = data.step + ' / ' + data.total;
+                
+                if (!data.running && data.result) {
+                    clearInterval(pollInterval);
+                    showResult(data.result);
+                    document.querySelectorAll('.btn').forEach(btn => btn.disabled = false);
+                }
+                
+            } catch (error) {
+                console.error('진행 확인 실패:', error);
+            }
+        }
+        
+        function showResult(result) {
+            document.getElementById('progressContainer').style.display = 'none';
+            const container = document.getElementById('resultContainer');
+            container.style.display = 'block';
+            
+            if (result.success) {
+                const summary = result.summary || {};
+                const features = (result.features || []).map(f => '<li>' + f + '</li>').join('');
+                
+                container.className = 'result-container result-success';
+                container.innerHTML = `
+                    <div class="result-title">
+                        <span>✅</span>
+                        <span>앱 생성 완료!</span>
+                    </div>
+                    
+                    <div class="result-card">
+                        <div class="result-label">프로젝트명</div>
+                        <div class="result-value">${result.project_name}</div>
+                    </div>
+                    
+                    <div class="result-card">
+                        <div class="result-label">설명</div>
+                        <div class="result-value">${result.description}</div>
+                    </div>
+                    
+                    <div class="result-card">
+                        <div class="result-label">주요 기능</div>
+                        <div class="result-value">
+                            <ul style="margin-left: 20px;">${features}</ul>
+                        </div>
+                    </div>
+                    
+                    <div class="result-card">
+                        <div class="result-label">생성 파일</div>
+                        <div class="result-value">${result.files.join(', ')}</div>
+                    </div>
+                    
+                    <div class="result-card">
+                        <div class="result-label">통계</div>
+                        <div class="result-value">
+                            📄 파일: ${summary.total_files || result.files.length}개<br>
+                            📝 라인: ${(summary.total_lines || 0).toLocaleString()}줄<br>
+                            ⏱️ 시간: ${(result.elapsed_time || 0).toFixed(1)}초
+                        </div>
+                    </div>
+                    
+                    <div class="deployment-info">
+                        <h4>📦 배포 방법</h4>
+                        <p style="font-size: 14px; margin-bottom: 10px;">
+                            1. 프로젝트 다운로드<br>
+                            2. <a href="https://script.google.com" target="_blank">script.google.com</a> 접속<br>
+                            3. 새 프로젝트 생성 후 파일 복사<br>
+                            4. 배포 → 웹 앱으로 배포
+                        </p>
+                        <p style="font-size: 12px; color: #856404;">
+                            💡 자세한 내용은 README.md 참고
+                        </p>
+                    </div>
+                    
+                    <button class="btn" style="margin-top: 15px;" onclick="downloadProject()">
+                        📥 프로젝트 다운로드 (ZIP)
+                    </button>
+                `;
+                
+            } else {
+                container.className = 'result-container result-error';
+                container.innerHTML = `
+                    <div class="result-title">
+                        <span>❌</span>
+                        <span>오류 발생</span>
+                    </div>
+                    <div class="result-card">
+                        <div class="result-value">${result.error}</div>
+                    </div>
+                    <button class="btn" style="margin-top: 15px; background: #6c757d;" onclick="location.reload()">
+                        🔄 다시 시도
+                    </button>
+                `;
+            }
+            
+            container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        
+        function showError(message) {
+            document.getElementById('progressContainer').style.display = 'none';
+            const container = document.getElementById('resultContainer');
+            container.style.display = 'block';
+            container.className = 'result-container result-error';
+            container.innerHTML = `
+                <div class="result-title">
+                    <span>❌</span>
+                    <span>오류</span>
+                </div>
+                <div class="result-card">
+                    <div class="result-value">${message}</div>
+                </div>
+            `;
+        }
+        
+        async function downloadProject() {
+            try {
+                const response = await fetch('/api/download?session_id=' + sessionId);
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'project_' + sessionId + '.zip';
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                alert('다운로드 실패: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
