@@ -263,7 +263,7 @@ JSON 응답: {"projectName":"", "description":"", "features":[], "architecture":
                 max_tokens=8000,
                 system=sys,
                 messages=msgs,
-                thinking={"type": "enabled", "budget_tokens": 1000}
+                thinking={"type": "enabled", "budget_tokens": 1024}
             )
             
             code = res.content[0].text if res.content else ""
