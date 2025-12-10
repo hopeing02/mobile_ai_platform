@@ -671,5 +671,14 @@ def main():
     
     app.run(debug=Config.DEBUG, host=Config.HOST, port=port, threaded=True)
 
+# Railway/Gunicorn이 이 앱을 찾습니다
+# 이 부분이 매우 중요합니다!
 if __name__ == '__main__':
     main()
+
+# Railway/Gunicorn용 앱 노출
+# gunicorn이 이 변수를 찾아서 실행합니다
+if __name__ != '__main__':
+    # Gunicorn 모드: 환경변수에서 포트 읽기
+    port = int(os.getenv('PORT', 5000))
+    Log.i(f'Gunicorn 모드: 포트 {port}')
