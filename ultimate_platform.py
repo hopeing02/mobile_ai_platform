@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI 자동 개발 플랫폼 - 최종 완전판 v4.0
+AI 자동 개발 플랫폼 - 최종 완전판 v4.1 (ThinkingBlock 버그 수정)
 - Prompt Caching: 비용 90% 절감
 - Extended Thinking: 정확한 코드 생성
 - SQLite: 프로젝트 히스토리 관리
@@ -152,7 +152,7 @@ def get_cache(k):
 def set_cache(k, d): cache_store[k] = (d, time.time()) if Config.CACHE_ENABLED else None
 
 # ============================================================
-# API 클라이언트 (Caching + Thinking)
+# API 클라이언트 (Caching + Thinking) - ThinkingBlock 버그 수정
 # ============================================================
 class APIClient:
     def __init__(self, key=None):
@@ -182,9 +182,8 @@ class APIClient:
                 "type": "text",
                 "text": """전문 Google Apps Script 개발자.
 규칙: 1) 기존 변수/함수명 유지 2) 한글 주석 3) 에러 처리 4) 모바일 최적화
-중요: 다음 JSON 형식만 반환하세요. 설명, 마크다운, 코드블록 없이 순수 JSON만
-{"projectName":"", "description":"", "features":[], "architecture":{}, "files":[{"name":"Code.js","type":"gas","description":""}]}
-절대 json 이나 다른 텍스트를 추가하지 마세요.""",
+JSON 응답만: {"projectName":"", "description":"", "features":[], "architecture":{}, "files":[{"name":"Code.js","type":"gas","description":""}]}
+중요: 반드시 유효한 JSON만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.""",
                 "cache_control": {"type": "ephemeral"}
             }]
             
@@ -206,15 +205,16 @@ class APIClient:
                 thinking={"type": "enabled", "budget_tokens": 2000}
             )
             
+            # ThinkingBlock 버그 수정: 안전한 속성 접근
             txt, think = "", ""
             for b in res.content:
-                # ThinkingBlock의 올바른 속성 접근
+                # ThinkingBlock과 TextBlock 처리
                 if hasattr(b, 'type'):
                     if b.type == "thinking":
-                        # thinking 속성 사용 (text 아님!)
-                        think = getattr(b, 'thinking', '')[:200]
+                        # thinking 속성이 있으면 사용, 없으면 text 시도
+                        think = getattr(b, 'thinking', getattr(b, 'text', ''))[:200]
                     elif b.type == "text":
-                        txt = b.text
+                        txt = getattr(b, 'text', '')
             
             # 캐시 통계
             if hasattr(res, 'usage') and hasattr(res.usage, 'cache_read_input_tokens'):
@@ -230,19 +230,47 @@ class APIClient:
             # 마크다운 코드 블록 제거
             if txt.startswith('```'):
                 lines = txt.split('\n')
-                txt = '\n'.join(lines[1:-1]) if len(lines) > 2 else txt
+                # 첫 줄과 마지막 줄 제거
+                if len(lines) > 2:
+                    txt = '\n'.join(lines[1:-1])
                 txt = txt.strip()
             
             # json 키워드 제거
-            if txt.startswith('json'):
+            if txt.lower().startswith('json'):
                 txt = txt[4:].strip()
             
-            # JSON 파싱 시도
+            # JSON 파싱 시도 (더 견고하게)
             try:
+                # 1차 시도: 직접 파싱
                 return json.loads(txt)
             except json.JSONDecodeError as je:
+                # 2차 시도: 중괄호로 잘라내기
+                try:
+                    start = txt.find('{')
+                    end = txt.rfind('}') + 1
+                    if start >= 0 and end > start:
+                        clean_json = txt[start:end]
+                        return json.loads(clean_json)
+                except:
+                    pass
+                
+                # 3차 시도: description 필드 정리
+                try:
+                    # description에 코드가 들어간 경우 제거
+                    import re
+                    # "description":"..."를 "description":"파일설명"으로 교체
+                    txt = re.sub(
+                        r'"description"\s*:\s*"[^"]*(?:function|var|const|<!DOCTYPE)[^"]*"',
+                        '"description":"파일"',
+                        txt
+                    )
+                    return json.loads(txt)
+                except:
+                    pass
+                
                 Log.e(f"JSON 파싱 실패: {je}")
                 Log.e(f"응답 내용 (처음 500자): {txt[:500]}")
+                Log.w("시뮬레이션 모드로 전환")
                 return self._sim_analyze(req)
                 
         except Exception as e:
@@ -276,12 +304,13 @@ class APIClient:
                 thinking={"type": "enabled", "budget_tokens": 1024}
             )
             
+            # ThinkingBlock 버그 수정: 안전한 속성 접근
             code = ""
             for b in res.content:
-                # ThinkingBlock과 TextBlock 모두 올바르게 처리
+                # ThinkingBlock과 TextBlock 올바르게 처리
                 if hasattr(b, 'type'):
                     if b.type == "text":
-                        code = b.text
+                        code = getattr(b, 'text', '')
                         break
             
             # 마크다운 코드 블록 제거
@@ -299,44 +328,416 @@ class APIClient:
 
     
     def _sim_analyze(self, req):
+        """시뮬레이션 분석 - 요구사항에 맞춰 더 정교하게"""
         Log.i('시뮬레이션 모드')
-        time.sleep(1)
+        time.sleep(0.5)
+        
+        # 요구사항에서 키워드 추출
+        req_lower = req.lower()
+        
+        # 프로젝트명 추론
+        if 'todo' in req_lower or '할 일' in req_lower or '할일' in req_lower:
+            project_name = 'Todo Manager'
+            features = ['할 일 추가/삭제', '완료 체크', '우선순위 설정', 'Google Sheets 저장', '드래그앤드롭']
+        elif 'diary' in req_lower or '일기' in req_lower:
+            project_name = 'AI 일기장'
+            features = ['일기 작성', 'AI 감정 분석', '월별 통계', '감정 그래프', '일기 검색']
+        elif 'receipt' in req_lower or '영수증' in req_lower:
+            project_name = '영수증 관리'
+            features = ['영수증 촬영', 'OCR 인식', '자동 분류', '월별 통계', '카테고리별 분석']
+        elif 'expense' in req_lower or '가계부' in req_lower or '지출' in req_lower:
+            project_name = '스마트 가계부'
+            features = ['수입/지출 입력', '카테고리 분류', '월별 통계', '예산 관리', '지출 알림']
+        else:
+            project_name = '맞춤 앱'
+            features = ['데이터 입력', '저장 기능', '통계 보기', '모바일 최적화']
+        
         return {
-            'projectName': '생성된 프로젝트',
-            'description': req[:100],
-            'features': ['데이터 입력', '저장', '통계'],
-            'architecture': {'frontend': ['HTML5'], 'backend': ['GAS'], 'database': ['Sheets']},
+            'projectName': project_name,
+            'description': req[:100] if len(req) > 100 else req,
+            'features': features,
+            'architecture': {
+                'frontend': 'HTML5, CSS3, JavaScript',
+                'backend': 'Google Apps Script',
+                'storage': 'Google Sheets',
+                'ui': '반응형 모바일 UI'
+            },
             'files': [
-                {'name': 'Code.js', 'type': 'gas', 'description': '백엔드'},
-                {'name': 'Index.html', 'type': 'html', 'description': 'UI'}
+                {'name': 'Code.js', 'type': 'gas', 'description': '백엔드 로직'},
+                {'name': 'Index.html', 'type': 'html', 'description': 'UI 인터페이스'}
             ],
-            'testCases': [{'name': '기본', 'description': '테스트', 'steps': ['입력', '저장']}],
+            'testCases': [{'name': '기본 테스트', 'description': '기능 확인', 'steps': ['입력', '저장', '조회']}],
             'deploymentConfig': {'access': 'ANYONE', 'executeAs': 'USER_DEPLOYING'}
         }
         
     def _sim_code(self, finfo):
-        time.sleep(0.5)
+        """시뮬레이션 코드 생성 - 더 완성도 있는 템플릿"""
+        time.sleep(0.3)
+        
         if finfo['type'] == 'gas':
-            return f"""// {finfo['name']}
+            return f"""// {finfo['name']} - 백엔드 로직
+// Google Apps Script 서버 사이드 코드
+
 function doGet() {{
-  return HtmlService.createHtmlOutputFromFile('Index').setTitle('앱');
+  // 웹앱 UI 표시
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('앱')
+    .setFaviconUrl(' https://www.gstatic.com/images/branding/product/1x/apps_script_48dp.png');
 }}
+
 function saveData(data) {{
   try {{
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    sheet.appendRow([new Date(), JSON.stringify(data)]);
-    return {{success: true}};
-  }} catch(e) {{ return {{success: false, error: e.toString()}}; }}
+    var timestamp = new Date();
+    
+    // 데이터 저장
+    sheet.appendRow([
+      timestamp,
+      JSON.stringify(data),
+      data.title || '',
+      data.status || 'pending'
+    ]);
+    
+    return {{
+      success: true,
+      message: '저장 완료',
+      timestamp: timestamp.toISOString()
+    }};
+  }} catch(e) {{
+    Logger.log('저장 오류: ' + e.toString());
+    return {{
+      success: false,
+      error: e.toString()
+    }};
+  }}
+}}
+
+function loadData() {{
+  try {{
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var data = sheet.getDataRange().getValues();
+    
+    // 헤더 제외
+    if (data.length > 1) {{
+      data = data.slice(1);
+    }}
+    
+    return {{
+      success: true,
+      data: data.map(function(row) {{
+        return {{
+          timestamp: row[0],
+          content: row[1],
+          title: row[2],
+          status: row[3]
+        }};
+      }})
+    }};
+  }} catch(e) {{
+    Logger.log('로드 오류: ' + e.toString());
+    return {{
+      success: false,
+      error: e.toString()
+    }};
+  }}
+}}
+
+function deleteData(rowIndex) {{
+  try {{
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    sheet.deleteRow(rowIndex + 2); // +2: 헤더 + 0-based index
+    
+    return {{
+      success: true,
+      message: '삭제 완료'
+    }};
+  }} catch(e) {{
+    return {{
+      success: false,
+      error: e.toString()
+    }};
+  }}
 }}"""
         else:
             return f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>앱</title><style>body{{font-family:sans-serif;max-width:800px;margin:50px auto;padding:20px}}
-.btn{{padding:12px 20px;background:#667eea;color:#fff;border:none;border-radius:8px;cursor:pointer}}</style>
-</head><body><h1>🎉 생성 완료</h1><input id="inp" placeholder="입력">
-<button class="btn" onclick="save()">저장</button>
-<script>function save(){{google.script.run.withSuccessHandler(r=>alert('성공')).saveData({{val:document.getElementById('inp').value}})}}</script>
-</body></html>"""
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>앱</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }}
+        
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }}
+        
+        .container {{
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }}
+        
+        h1 {{
+            color: #667eea;
+            margin-bottom: 30px;
+            font-size: 28px;
+            text-align: center;
+        }}
+        
+        .input-group {{
+            margin-bottom: 20px;
+        }}
+        
+        label {{
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+        }}
+        
+        input[type="text"], textarea {{
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: all 0.3s;
+            font-family: inherit;
+        }}
+        
+        input:focus, textarea:focus {{
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }}
+        
+        textarea {{
+            min-height: 120px;
+            resize: vertical;
+        }}
+        
+        .btn {{
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }}
+        
+        .btn:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }}
+        
+        .btn:active {{
+            transform: translateY(0);
+        }}
+        
+        .btn:disabled {{
+            opacity: 0.6;
+            cursor: not-allowed;
+        }}
+        
+        .btn-secondary {{
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        }}
+        
+        .status {{
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 12px;
+            display: none;
+            animation: fadeIn 0.3s;
+        }}
+        
+        .status.success {{
+            background: #d4edda;
+            color: #155724;
+            border: 2px solid #c3e6cb;
+        }}
+        
+        .status.error {{
+            background: #f8d7da;
+            color: #721c24;
+            border: 2px solid #f5c6cb;
+        }}
+        
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(-10px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
+        .items {{
+            margin-top: 30px;
+        }}
+        
+        .item {{
+            background: #f8f9ff;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            border: 2px solid #e0e0e0;
+        }}
+        
+        .item-title {{
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }}
+        
+        .item-content {{
+            color: #666;
+            font-size: 14px;
+        }}
+        
+        .loading {{
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }}
+        
+        @media (max-width: 768px) {{
+            .container {{
+                padding: 20px;
+            }}
+            h1 {{
+                font-size: 24px;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎉 앱이 생성되었습니다</h1>
+        
+        <div class="input-group">
+            <label>📝 제목</label>
+            <input type="text" id="title" placeholder="제목을 입력하세요">
+        </div>
+        
+        <div class="input-group">
+            <label>📄 내용</label>
+            <textarea id="content" placeholder="내용을 입력하세요"></textarea>
+        </div>
+        
+        <button class="btn" onclick="save()">💾 저장</button>
+        <button class="btn btn-secondary" onclick="load()">📋 불러오기</button>
+        
+        <div id="status" class="status"></div>
+        
+        <div id="items" class="items"></div>
+    </div>
+    
+    <script>
+        function save() {{
+            const title = document.getElementById('title').value;
+            const content = document.getElementById('content').value;
+            
+            if (!title || !content) {{
+                showStatus('제목과 내용을 모두 입력해주세요', 'error');
+                return;
+            }}
+            
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '저장 중...';
+            
+            google.script.run
+                .withSuccessHandler(function(result) {{
+                    btn.disabled = false;
+                    btn.textContent = '💾 저장';
+                    
+                    if (result.success) {{
+                        showStatus('✅ ' + result.message, 'success');
+                        document.getElementById('title').value = '';
+                        document.getElementById('content').value = '';
+                        load();
+                    }} else {{
+                        showStatus('❌ ' + result.error, 'error');
+                    }}
+                }})
+                .withFailureHandler(function(error) {{
+                    btn.disabled = false;
+                    btn.textContent = '💾 저장';
+                    showStatus('❌ 오류: ' + error, 'error');
+                }})
+                .saveData({{
+                    title: title,
+                    content: content,
+                    status: 'active',
+                    timestamp: new Date().toISOString()
+                }});
+        }}
+        
+        function load() {{
+            const itemsDiv = document.getElementById('items');
+            itemsDiv.innerHTML = '<div class="loading">📥 데이터 로딩 중...</div>';
+            
+            google.script.run
+                .withSuccessHandler(function(result) {{
+                    if (result.success) {{
+                        if (result.data && result.data.length > 0) {{
+                            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">📋 저장된 항목</h3>';
+                            result.data.reverse().forEach(function(item, index) {{
+                                html += `
+                                    <div class="item">
+                                        <div class="item-title">${{item.title || '제목 없음'}}</div>
+                                        <div class="item-content">${{item.content || ''}}</div>
+                                    </div>
+                                `;
+                            }});
+                            itemsDiv.innerHTML = html;
+                        }} else {{
+                            itemsDiv.innerHTML = '<div class="loading">📭 저장된 항목이 없습니다</div>';
+                        }}
+                    }} else {{
+                        itemsDiv.innerHTML = '<div class="loading">❌ ' + result.error + '</div>';
+                    }}
+                }})
+                .withFailureHandler(function(error) {{
+                    itemsDiv.innerHTML = '<div class="loading">❌ 오류: ' + error + '</div>';
+                }})
+                .loadData();
+        }}
+        
+        function showStatus(message, type) {{
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + type;
+            status.style.display = 'block';
+            
+            setTimeout(function() {{
+                status.style.display = 'none';
+            }}, 3000);
+        }}
+        
+        // 페이지 로드 시 데이터 불러오기
+        window.onload = function() {{
+            load();
+        }};
+    </script>
+</body>
+</html>"""
 
 # ============================================================
 # 배포 관리자 (Clasp)
@@ -407,7 +808,7 @@ class DeployManager:
             
             # URL 추출
             for line in res.stdout.split('\n'):
-                if 'https://script.google.com' in line:
+                if ' https://script.google.com' in line:
                     Log.s('배포 완료')
                     return line.strip()
             
@@ -479,7 +880,7 @@ class ProjectGen:
             codes['appsscript.json'] = json.dumps({
                 "timeZone": "Asia/Seoul", "runtimeVersion": "V8",
                 "webapp": analysis.get('deploymentConfig', {}),
-                "oauthScopes": ["https://www.googleapis.com/auth/spreadsheets"]
+                "oauthScopes": [" https://www.googleapis.com/auth/spreadsheets"]
             }, indent=2)
             
             codes['README.md'] = f"# {analysis['projectName']}\n{analysis['description']}\n\n배포: https://script.google.com"
@@ -617,8 +1018,8 @@ def api_proj(pid):
 def api_health():
     return jsonify({
         'status': 'healthy',
-        'version': '4.0.0',
-        'features': ['Caching', 'Thinking', 'SQLite', 'CLI'],
+        'version': '4.1.0',
+        'features': ['Caching', 'Thinking', 'SQLite', 'CLI', 'ThinkingBlock Fixed'],
         'api_configured': bool(Config.CLAUDE_API_KEY)
     })
 
@@ -626,7 +1027,7 @@ def api_health():
 # CLI 모드
 # ============================================================
 def run_cli(args):
-    print(f"\n{'='*60}\n{C.BOLD}🚀 AI 자동 개발 v4.0{C.E}\n{'='*60}\n")
+    print(f"\n{'='*60}\n{C.BOLD}🚀 AI 자동 개발 v4.1{C.E}\n{'='*60}\n")
     
     key = args.api_key or Config.CLAUDE_API_KEY
     if not key:
@@ -652,72 +1053,3 @@ def run_cli(args):
         print(f"\n📁 {Config.OUTPUT_DIR / sid}")
         print(f"📄 파일: {len(result['files'])}")
         print(f"⏱️  {result['elapsed_time']:.1f}초")
-        
-        if result.get('deployment_url'):
-            print(f"🌐 배포: {result['deployment_url']}")
-        
-        sys.exit(0)
-    else:
-        print(f"{C.R}{C.BOLD}❌ 실패{C.E}\n{'='*60}")
-        print(f"\n{result.get('error', '알 수 없는 오류')}")
-        sys.exit(1)
-
-# ============================================================
-# 메인
-# ============================================================
-def main():
-    parser = argparse.ArgumentParser(description='AI 자동 개발 플랫폼 v4.0')
-    parser.add_argument('--cli', action='store_true', help='CLI 모드')
-    parser.add_argument('--requirements', help='요구사항 파일')
-    parser.add_argument('--api-key', help='API 키')
-    parser.add_argument('--port', type=int, help='포트')
-    parser.add_argument('--skip-tests', action='store_true', help='테스트/배포 스킵')
-    args = parser.parse_args()
-    
-    if args.cli:
-        run_cli(args)
-        return
-    
-    # 웹 모드
-    port = args.port or Config.PORT
-    print(f"\n{'='*60}\n{C.BOLD}🚀 AI 자동 개발 v4.0{C.E}\n{'='*60}")
-    print(f"\n✅ http://{Config.HOST}:{port}")
-    print(f"✅ 출력: {Config.OUTPUT_DIR}")
-    
-    if Config.CLAUDE_API_KEY:
-        k = Config.CLAUDE_API_KEY
-        print(f"✅ API: {k[:10]}...{k[-4:]}")
-    else:
-        print(f"⚠️  API 미설정")
-    
-    # Clasp 확인
-    try:
-        if subprocess.run(['clasp', '--version'], capture_output=True).returncode == 0:
-            print(f"✅ Clasp: 설치됨 (배포 가능)")
-        else:
-            print(f"⚠️  Clasp: 미설치 (수동 배포만)")
-    except FileNotFoundError:
-        print(f"⚠️  Clasp: 미설치 (수동 배포만)")
-    
-    print(f"\n💡 기능:")
-    print(f"  🔥 Prompt Caching (90% 비용 절감)")
-    print(f"  🧠 Extended Thinking (정확한 코드)")
-    print(f"  💾 SQLite (프로젝트 히스토리)")
-    print(f"  🔄 변수/함수명 기억 및 유지")
-    print(f"  🚀 Clasp 자동 배포")
-    print(f"\n📦 설치: npm install -g @google/clasp")
-    print(f"{'='*60}\n")
-    
-    app.run(debug=Config.DEBUG, host=Config.HOST, port=port, threaded=True)
-
-# Railway/Gunicorn이 이 앱을 찾습니다
-# 이 부분이 매우 중요합니다!
-if __name__ == '__main__':
-    main()
-
-# Railway/Gunicorn용 앱 노출
-# gunicorn이 이 변수를 찾아서 실행합니다
-if __name__ != '__main__':
-    # Gunicorn 모드: 환경변수에서 포트 읽기
-    port = int(os.getenv('PORT', 5000))
-    Log.i(f'Gunicorn 모드: 포트 {port}')
