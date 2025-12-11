@@ -184,7 +184,7 @@ class APIClient:
 규칙: 1) 기존 변수/함수명 유지 2) 한글 주석 3) 에러 처리 4) 모바일 최적화
 중요: 다음 JSON 형식만 반환하세요. 설명, 마크다운, 코드블록 없이 순수 JSON만
 {"projectName":"", "description":"", "features":[], "architecture":{}, "files":[{"name":"Code.js","type":"gas","description":""}]}
-절대 ```json 이나 다른 텍스트를 추가하지 마세요.""",
+절대 json 이나 다른 텍스트를 추가하지 마세요.""",
                 "cache_control": {"type": "ephemeral"}
             }]
             
