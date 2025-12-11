@@ -172,7 +172,7 @@ class APIClient:
         except Exception as e:
             Log.e(f'API 초기화 실패: {e}')
     
-    def analyze(self, req, proj=None):
+def analyze(self, req, proj=None):
         if not self.real or not self.client:
             return self._sim_analyze(req)
         
@@ -182,19 +182,19 @@ class APIClient:
                 "type": "text",
                 "text": """전문 Google Apps Script 개발자.
 규칙: 1) 기존 변수/함수명 유지 2) 한글 주석 3) 에러 처리 4) 모바일 최적화
-JSON 응답: {"projectName":"", "description":"", "features":[], "architecture":{}, "files":[{"name":"Code.js","type":"gas"}]}""",
-                "cache_control": {"type": "ephemeral"}  # Caching!
+JSON 응답만: {"projectName":"", "description":"", "features":[], "architecture":{}, "files":[{"name":"Code.js","type":"gas","description":""}]}
+중요: 반드시 유효한 JSON만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.""",
+                "cache_control": {"type": "ephemeral"}
             }]
             
             msgs = []
             
-            # 기존 프로젝트 컨텍스트 (수정 모드, 캐싱)
             if proj:
                 ctx = f"기존: {proj['code'][:300]}...\n변수: {','.join(proj.get('variables',[]))}\n함수: {','.join(proj.get('functions',[]))}\n⚠️유지!"
                 msgs.append({"role": "user", "content": [{"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}}]})
                 msgs.append({"role": "assistant", "content": "이해. 변수/함수명 유지."})
             
-            msgs.append({"role": "user", "content": req})
+            msgs.append({"role": "user", "content": req + "\n\n반드시 유효한 JSON 형식으로만 응답하세요."})
             
             # Extended Thinking 활성화
             res = self.client.messages.create(
@@ -202,29 +202,100 @@ JSON 응답: {"projectName":"", "description":"", "features":[], "architecture":
                 max_tokens=4096,
                 system=sys,
                 messages=msgs,
-                thinking={"type": "enabled", "budget_tokens": 2000}  # Thinking!
+                thinking={"type": "enabled", "budget_tokens": 2000}
             )
             
             txt, think = "", ""
             for b in res.content:
-                if b.type == "thinking": think = b.thinking[:200]
-                elif b.type == "text": txt = b.text
+                # ThinkingBlock의 올바른 속성 접근
+                if hasattr(b, 'type'):
+                    if b.type == "thinking":
+                        # thinking 속성 사용 (text 아님!)
+                        think = getattr(b, 'thinking', '')[:200]
+                    elif b.type == "text":
+                        txt = b.text
             
             # 캐시 통계
-            if hasattr(res.usage, 'cache_read_input_tokens') and res.usage.cache_read_input_tokens > 0:
-                Log.s(f"캐시 읽기: {res.usage.cache_read_input_tokens} 토큰 (90% 절감!)")
-            if think: Log.i(f"AI 사고: {think}...")
+            if hasattr(res, 'usage') and hasattr(res.usage, 'cache_read_input_tokens'):
+                if res.usage.cache_read_input_tokens > 0:
+                    Log.s(f"캐시 읽기: {res.usage.cache_read_input_tokens} 토큰")
             
-            # JSON 추출
+            if think:
+                Log.i(f"AI 사고: {think}...")
+            
+            # JSON 추출 (강화된 버전)
+            txt = txt.strip()
+            
+            # 마크다운 코드 블록 제거
             if txt.startswith('```'):
-                txt = txt.split('```')[1]
-                if txt.startswith('json'): txt = txt[4:]
+                lines = txt.split('\n')
+                txt = '\n'.join(lines[1:-1]) if len(lines) > 2 else txt
                 txt = txt.strip()
             
-            return json.loads(txt)
+            # json 키워드 제거
+            if txt.startswith('json'):
+                txt = txt[4:].strip()
+            
+            # JSON 파싱 시도
+            try:
+                return json.loads(txt)
+            except json.JSONDecodeError as je:
+                Log.e(f"JSON 파싱 실패: {je}")
+                Log.e(f"응답 내용 (처음 500자): {txt[:500]}")
+                return self._sim_analyze(req)
+                
         except Exception as e:
             Log.e(f'분석 실패: {e}')
+            import traceback
+            traceback.print_exc()
             return self._sim_analyze(req)
+    
+    def gen_code(self, analysis, finfo, proj=None):
+        if not self.real or not self.client:
+            return self._sim_code(finfo)
+        
+        try:
+            sys = [{"type": "text", "text": "코드 생성 AI. 완전 작동 코드, 한글 주석, 에러 처리. 코드만 반환하고 설명 금지.", "cache_control": {"type": "ephemeral"}}]
+            
+            msgs = []
+            if proj:
+                ctx = f"기존: {proj['code'][:300]}\n⚠️변수/함수명 유지!"
+                msgs.append({"role": "user", "content": [{"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}}]})
+                msgs.append({"role": "assistant", "content": "유지."})
+            
+            prompt = f"파일: {finfo['name']} ({finfo['type']})\n목적: {finfo['description']}\n프로젝트: {analysis['projectName']}\n\n순수 코드만 반환하세요. 마크다운이나 설명 없이:"
+            msgs.append({"role": "user", "content": prompt})
+            
+            # Extended Thinking (최소 1024 토큰)
+            res = self.client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=8000,
+                system=sys,
+                messages=msgs,
+                thinking={"type": "enabled", "budget_tokens": 1024}
+            )
+            
+            code = ""
+            for b in res.content:
+                # ThinkingBlock과 TextBlock 모두 올바르게 처리
+                if hasattr(b, 'type'):
+                    if b.type == "text":
+                        code = b.text
+                        break
+            
+            # 마크다운 코드 블록 제거
+            if code.startswith('```'):
+                lines = code.split('\n')
+                code = '\n'.join(lines[1:-1]) if len(lines) > 2 else code
+            
+            return code.strip()
+            
+        except Exception as e:
+            Log.e(f'코드 생성 실패: {e}')
+            import traceback
+            traceback.print_exc()
+            return self._sim_code(finfo)
+
     
     def _sim_analyze(self, req):
         Log.i('시뮬레이션 모드')
@@ -241,40 +312,7 @@ JSON 응답: {"projectName":"", "description":"", "features":[], "architecture":
             'testCases': [{'name': '기본', 'description': '테스트', 'steps': ['입력', '저장']}],
             'deploymentConfig': {'access': 'ANYONE', 'executeAs': 'USER_DEPLOYING'}
         }
-    
-    def gen_code(self, analysis, finfo, proj=None):
-        if not self.real or not self.client:
-            return self._sim_code(finfo)
         
-        try:
-            sys = [{"type": "text", "text": "코드 생성 AI. 완전 작동 코드, 한글 주석, 에러 처리.", "cache_control": {"type": "ephemeral"}}]
-            
-            msgs = []
-            if proj:
-                ctx = f"기존: {proj['code'][:300]}\n⚠️변수/함수명 유지!"
-                msgs.append({"role": "user", "content": [{"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}}]})
-                msgs.append({"role": "assistant", "content": "유지."})
-            
-            prompt = f"파일: {finfo['name']} ({finfo['type']})\n목적: {finfo['description']}\n프로젝트: {analysis['projectName']}\n코드만 반환:"
-            msgs.append({"role": "user", "content": prompt})
-            
-            res = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=8000,
-                system=sys,
-                messages=msgs,
-                thinking={"type": "enabled", "budget_tokens": 1024}
-            )
-            
-            code = res.content[0].text if res.content else ""
-            if code.startswith('```'):
-                code = '\n'.join(code.split('\n')[1:-1])
-            
-            return code
-        except Exception as e:
-            Log.e(f'코드 생성 실패: {e}')
-            return self._sim_code(finfo)
-    
     def _sim_code(self, finfo):
         time.sleep(0.5)
         if finfo['type'] == 'gas':
