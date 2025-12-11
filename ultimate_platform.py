@@ -172,83 +172,83 @@ class APIClient:
         except Exception as e:
             Log.e(f'API 초기화 실패: {e}')
     
-def analyze(self, req, proj=None):
-        if not self.real or not self.client:
-            return self._sim_analyze(req)
-        
-        try:
-            # 시스템 프롬프트 (캐싱)
-            sys = [{
-                "type": "text",
-                "text": """전문 Google Apps Script 개발자.
-규칙: 1) 기존 변수/함수명 유지 2) 한글 주석 3) 에러 처리 4) 모바일 최적화
-JSON 응답만: {"projectName":"", "description":"", "features":[], "architecture":{}, "files":[{"name":"Code.js","type":"gas","description":""}]}
-중요: 반드시 유효한 JSON만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.""",
-                "cache_control": {"type": "ephemeral"}
-            }]
-            
-            msgs = []
-            
-            if proj:
-                ctx = f"기존: {proj['code'][:300]}...\n변수: {','.join(proj.get('variables',[]))}\n함수: {','.join(proj.get('functions',[]))}\n⚠️유지!"
-                msgs.append({"role": "user", "content": [{"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}}]})
-                msgs.append({"role": "assistant", "content": "이해. 변수/함수명 유지."})
-            
-            msgs.append({"role": "user", "content": req + "\n\n반드시 유효한 JSON 형식으로만 응답하세요."})
-            
-            # Extended Thinking 활성화
-            res = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=4096,
-                system=sys,
-                messages=msgs,
-                thinking={"type": "enabled", "budget_tokens": 2000}
-            )
-            
-            txt, think = "", ""
-            for b in res.content:
-                # ThinkingBlock의 올바른 속성 접근
-                if hasattr(b, 'type'):
-                    if b.type == "thinking":
-                        # thinking 속성 사용 (text 아님!)
-                        think = getattr(b, 'thinking', '')[:200]
-                    elif b.type == "text":
-                        txt = b.text
-            
-            # 캐시 통계
-            if hasattr(res, 'usage') and hasattr(res.usage, 'cache_read_input_tokens'):
-                if res.usage.cache_read_input_tokens > 0:
-                    Log.s(f"캐시 읽기: {res.usage.cache_read_input_tokens} 토큰")
-            
-            if think:
-                Log.i(f"AI 사고: {think}...")
-            
-            # JSON 추출 (강화된 버전)
-            txt = txt.strip()
-            
-            # 마크다운 코드 블록 제거
-            if txt.startswith('```'):
-                lines = txt.split('\n')
-                txt = '\n'.join(lines[1:-1]) if len(lines) > 2 else txt
-                txt = txt.strip()
-            
-            # json 키워드 제거
-            if txt.startswith('json'):
-                txt = txt[4:].strip()
-            
-            # JSON 파싱 시도
-            try:
-                return json.loads(txt)
-            except json.JSONDecodeError as je:
-                Log.e(f"JSON 파싱 실패: {je}")
-                Log.e(f"응답 내용 (처음 500자): {txt[:500]}")
+    def analyze(self, req, proj=None):
+            if not self.real or not self.client:
                 return self._sim_analyze(req)
+            
+            try:
+                # 시스템 프롬프트 (캐싱)
+                sys = [{
+                    "type": "text",
+                    "text": """전문 Google Apps Script 개발자.
+    규칙: 1) 기존 변수/함수명 유지 2) 한글 주석 3) 에러 처리 4) 모바일 최적화
+    JSON 응답만: {"projectName":"", "description":"", "features":[], "architecture":{}, "files":[{"name":"Code.js","type":"gas","description":""}]}
+    중요: 반드시 유효한 JSON만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.""",
+                    "cache_control": {"type": "ephemeral"}
+                }]
                 
-        except Exception as e:
-            Log.e(f'분석 실패: {e}')
-            import traceback
-            traceback.print_exc()
-            return self._sim_analyze(req)
+                msgs = []
+                
+                if proj:
+                    ctx = f"기존: {proj['code'][:300]}...\n변수: {','.join(proj.get('variables',[]))}\n함수: {','.join(proj.get('functions',[]))}\n⚠️유지!"
+                    msgs.append({"role": "user", "content": [{"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}}]})
+                    msgs.append({"role": "assistant", "content": "이해. 변수/함수명 유지."})
+                
+                msgs.append({"role": "user", "content": req + "\n\n반드시 유효한 JSON 형식으로만 응답하세요."})
+                
+                # Extended Thinking 활성화
+                res = self.client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=4096,
+                    system=sys,
+                    messages=msgs,
+                    thinking={"type": "enabled", "budget_tokens": 2000}
+                )
+                
+                txt, think = "", ""
+                for b in res.content:
+                    # ThinkingBlock의 올바른 속성 접근
+                    if hasattr(b, 'type'):
+                        if b.type == "thinking":
+                            # thinking 속성 사용 (text 아님!)
+                            think = getattr(b, 'thinking', '')[:200]
+                        elif b.type == "text":
+                            txt = b.text
+                
+                # 캐시 통계
+                if hasattr(res, 'usage') and hasattr(res.usage, 'cache_read_input_tokens'):
+                    if res.usage.cache_read_input_tokens > 0:
+                        Log.s(f"캐시 읽기: {res.usage.cache_read_input_tokens} 토큰")
+                
+                if think:
+                    Log.i(f"AI 사고: {think}...")
+                
+                # JSON 추출 (강화된 버전)
+                txt = txt.strip()
+                
+                # 마크다운 코드 블록 제거
+                if txt.startswith('```'):
+                    lines = txt.split('\n')
+                    txt = '\n'.join(lines[1:-1]) if len(lines) > 2 else txt
+                    txt = txt.strip()
+                
+                # json 키워드 제거
+                if txt.startswith('json'):
+                    txt = txt[4:].strip()
+                
+                # JSON 파싱 시도
+                try:
+                    return json.loads(txt)
+                except json.JSONDecodeError as je:
+                    Log.e(f"JSON 파싱 실패: {je}")
+                    Log.e(f"응답 내용 (처음 500자): {txt[:500]}")
+                    return self._sim_analyze(req)
+                    
+            except Exception as e:
+                Log.e(f'분석 실패: {e}')
+                import traceback
+                traceback.print_exc()
+                return self._sim_analyze(req)
     
     def gen_code(self, analysis, finfo, proj=None):
         if not self.real or not self.client:
