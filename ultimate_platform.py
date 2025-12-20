@@ -284,15 +284,18 @@ JSON 응답만: {"projectName":"", "description":"", "features":[], "architectur
             return self._sim_code(finfo)
         
         try:
-            sys = [{"type": "text", "text": "코드 생성 AI. 완전 작동 코드, 한글 주석, 에러 처리. 코드만 반환하고 설명 금지.", "cache_control": {"type": "ephemeral"}}]
+            # ASCII 안전 시스템 프롬프트
+            sys = [{"type": "text", "text": "Code generation AI. Complete working code with Korean comments and error handling. Return ONLY code, no explanations or markdown.", "cache_control": {"type": "ephemeral"}}]
             
             msgs = []
             if proj:
-                ctx = f"기존: {proj['code'][:300]}\n⚠️변수/함수명 유지!"
+                # ASCII 안전 컨텍스트
+                ctx = f"Existing code: {proj['code'][:300]}\nIMPORTANT: Keep variable/function names!"
                 msgs.append({"role": "user", "content": [{"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}}]})
-                msgs.append({"role": "assistant", "content": "유지."})
+                msgs.append({"role": "assistant", "content": "Will maintain names."})
             
-            prompt = f"파일: {finfo['name']} ({finfo['type']})\n목적: {finfo['description']}\n프로젝트: {analysis['projectName']}\n\n순수 코드만 반환하세요. 마크다운이나 설명 없이:"
+            # ASCII 안전 프롬프트
+            prompt = f"File: {finfo['name']} ({finfo['type']})\nPurpose: {finfo.get('description', 'Main file')}\nProject: {analysis.get('projectName', 'App')}\n\nReturn pure code only. No markdown or explanations:"
             msgs.append({"role": "user", "content": prompt})
             
             # Extended Thinking (최소 1024 토큰)
@@ -382,7 +385,7 @@ function doGet() {{
   // 웹앱 UI 표시
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle('앱')
-    .setFaviconUrl(' https://www.gstatic.com/images/branding/product/1x/apps_script_48dp.png');
+    .setFaviconUrl('https://www.gstatic.com/images/branding/product/1x/apps_script_48dp.png');
 }}
 
 function saveData(data) {{
@@ -808,7 +811,7 @@ class DeployManager:
             
             # URL 추출
             for line in res.stdout.split('\n'):
-                if ' https://script.google.com' in line:
+                if 'https://script.google.com' in line:
                     Log.s('배포 완료')
                     return line.strip()
             
@@ -880,7 +883,7 @@ class ProjectGen:
             codes['appsscript.json'] = json.dumps({
                 "timeZone": "Asia/Seoul", "runtimeVersion": "V8",
                 "webapp": analysis.get('deploymentConfig', {}),
-                "oauthScopes": [" https://www.googleapis.com/auth/spreadsheets"]
+                "oauthScopes": ["https://www.googleapis.com/auth/spreadsheets"]
             }, indent=2)
             
             codes['README.md'] = f"# {analysis['projectName']}\n{analysis['description']}\n\n배포: https://script.google.com"
