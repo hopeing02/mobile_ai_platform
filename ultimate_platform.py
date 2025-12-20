@@ -1037,4 +1037,8 @@ if __name__ != '__main__':
             
             Log.w('No deployment URL')
             return None
-        except FileNotFoundError
+        except FileNotFoundError:
+            print(f"⚠️  Clasp: Not installed (manual deployment only)")
+            
+            
+            
