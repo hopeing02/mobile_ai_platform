@@ -998,7 +998,7 @@ if __name__ == '__main__':
 
 if __name__ != '__main__':
     port = int(os.getenv('PORT', 5000))
-    Log.i(f'Gunicorn mode: port {port}'):
+    Log.i(f'Gunicorn mode: port {port}')
             Log.w('Clasp not installed')
             return True
         except subprocess.TimeoutExpired:
