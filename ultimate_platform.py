@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-AI 자동 개발 플랫폼 - 최종 완전판 v4.1 (ThinkingBlock 버그 수정)
+AI 자동 개발 플랫폼 - 최종 완전판 v4.2 (ASCII 인코딩 버그 수정)
 - Prompt Caching: 비용 90% 절감
 - Extended Thinking: 정확한 코드 생성
 - SQLite: 프로젝트 히스토리 관리
 - 변수/함수명 기억 및 유지
 - 웹 + CLI 모드
 - Clasp 배포 지원
+- ASCII 안전 처리
 
 실행: python ultimate_platform.py
 CLI: python ultimate_platform.py --cli --requirements req.md
 """
 
-import os, sys, json, time, secrets, hashlib, threading, zipfile, io, subprocess, argparse, re, sqlite3
+import os, sys, json, time, secrets, hashlib, threading, zipfile, io, subprocess, argparse, re, sqlite3, base64
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from functools import wraps
 from flask import Flask, send_from_directory, request, jsonify, send_file
+
+# UTF-8 인코딩 강제 설정
+if sys.version_info[0] >= 3:
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ============================================================
 # 설정
@@ -25,17 +33,15 @@ from flask import Flask, send_from_directory, request, jsonify, send_file
 class Config:
     SECRET_KEY = os.urandom(24)
     DEBUG = False
-    PORT = int(os.getenv('PORT', 5000))  # Railway가 자동으로 PORT 설정
-    HOST = '0.0.0.0'  # Railway에서 필수
+    PORT = int(os.getenv('PORT', 5000))
+    HOST = '0.0.0.0'
     
     OUTPUT_DIR = Path('./output')
     
-    # Railway 환경변수에서 API 키 읽기
     CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY', os.getenv('CLAUDE_API_KEY', ''))
     
-    # 로컬 개발용 (Railway에서는 환경변수 사용)
     if not CLAUDE_API_KEY:
-        CLAUDE_API_KEY = 'sk-ant-api03-여기에실제키입력'  # ← 로컬 개발용
+        CLAUDE_API_KEY = 'sk-ant-api03-키입력'
     
     API_TIMEOUT = 120
     CACHE_ENABLED = True
@@ -58,6 +64,32 @@ class Log:
     def w(m): print(f"{C.Y}[{datetime.now():%H:%M:%S}] ⚠{C.E} {m}")
     @staticmethod
     def e(m): print(f"{C.R}[{datetime.now():%H:%M:%S}] ✗{C.E} {m}")
+
+# ============================================================
+# ASCII 안전 유틸리티
+# ============================================================
+def safe_encode(text, max_len=500):
+    """한글 텍스트를 ASCII 안전하게 변환"""
+    if not text:
+        return ""
+    
+    # UTF-8 바이트로 변환 후 Base64 인코딩
+    try:
+        # 길이 제한
+        text = text[:max_len] if len(text) > max_len else text
+        # Base64 인코딩 (ASCII 안전)
+        encoded = base64.b64encode(text.encode('utf-8')).decode('ascii')
+        return encoded
+    except:
+        # 실패 시 영어만 추출
+        return ''.join(c for c in text if ord(c) < 128)[:max_len]
+
+def safe_decode(encoded_text):
+    """Base64 인코딩된 텍스트를 한글로 복원"""
+    try:
+        return base64.b64decode(encoded_text.encode('ascii')).decode('utf-8')
+    except:
+        return encoded_text
 
 # ============================================================
 # SQLite 초기화
@@ -152,7 +184,7 @@ def get_cache(k):
 def set_cache(k, d): cache_store[k] = (d, time.time()) if Config.CACHE_ENABLED else None
 
 # ============================================================
-# API 클라이언트 (Caching + Thinking) - ThinkingBlock 버그 수정
+# API 클라이언트 (ASCII 안전 버전)
 # ============================================================
 class APIClient:
     def __init__(self, key=None):
@@ -161,42 +193,69 @@ class APIClient:
         self.client = None
         
         if not self.key:
-            Log.w('API 키 없음 - 시뮬레이션')
+            Log.w('API key missing - simulation mode')
             return
         
         try:
             from anthropic import Anthropic
             self.client = Anthropic(api_key=self.key, timeout=Config.API_TIMEOUT, max_retries=3)
             self.real = True
-            Log.s('Claude API 초기화 (Caching+Thinking 활성화)')
+            Log.s('Claude API initialized (Caching+Thinking enabled)')
         except Exception as e:
-            Log.e(f'API 초기화 실패: {e}')
+            Log.e(f'API init failed: {e}')
     
     def analyze(self, req, proj=None):
         if not self.real or not self.client:
             return self._sim_analyze(req)
         
         try:
-            # 시스템 프롬프트 (캐싱)
+            # ASCII 안전 시스템 프롬프트 (100% 영어)
             sys = [{
                 "type": "text",
-                "text": """전문 Google Apps Script 개발자.
-규칙: 1) 기존 변수/함수명 유지 2) 한글 주석 3) 에러 처리 4) 모바일 최적화
-JSON 응답만: {"projectName":"", "description":"", "features":[], "architecture":{}, "files":[{"name":"Code.js","type":"gas","description":""}]}
-중요: 반드시 유효한 JSON만 반환하세요. 설명이나 마크다운 없이 순수 JSON만.""",
+                "text": """Professional Google Apps Script Developer.
+
+IMPORTANT: Respond ONLY with valid JSON. No markdown, no explanations, just pure JSON:
+
+{
+  "projectName": "App Name",
+  "description": "Brief description",
+  "features": ["Feature 1", "Feature 2", "Feature 3"],
+  "architecture": {"frontend": "HTML5", "backend": "GAS", "storage": "Sheets"},
+  "files": [
+    {"name": "Code.js", "type": "gas", "description": "Backend file"},
+    {"name": "Index.html", "type": "html", "description": "UI file"}
+  ]
+}
+
+RULES:
+1. File descriptions must be SHORT (under 15 chars)
+2. NO code in description field
+3. NO special characters
+4. Keep existing variable/function names if provided
+5. Add Korean comments in generated code later
+6. Include error handling""",
                 "cache_control": {"type": "ephemeral"}
             }]
             
             msgs = []
             
+            # 기존 프로젝트 컨텍스트 (ASCII 안전)
             if proj:
-                ctx = f"기존: {proj['code'][:300]}...\n변수: {','.join(proj.get('variables',[]))}\n함수: {','.join(proj.get('functions',[]))}\n⚠️유지!"
-                msgs.append({"role": "user", "content": [{"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}}]})
-                msgs.append({"role": "assistant", "content": "이해. 변수/함수명 유지."})
+                # 변수/함수명만 전달 (최대 5개)
+                vars_list = ', '.join(proj.get('variables', [])[:5])
+                funcs_list = ', '.join(proj.get('functions', [])[:5])
+                ctx = f"Existing variables: {vars_list}\nExisting functions: {funcs_list}\nIMPORTANT: Keep these names!"
+                msgs.append({"role": "user", "content": ctx})
+                msgs.append({"role": "assistant", "content": "Understood. Will maintain names."})
             
-            msgs.append({"role": "user", "content": req + "\n\n반드시 유효한 JSON 형식으로만 응답하세요."})
+            # 요구사항을 짧게 요약 (ASCII 안전)
+            safe_req = req[:300].encode('ascii', errors='ignore').decode('ascii')
+            if not safe_req.strip():
+                safe_req = "Create a web app with Google Apps Script"
             
-            # Extended Thinking 활성화
+            msgs.append({"role": "user", "content": f"{safe_req}\n\nRespond with valid JSON only."})
+            
+            # API 호출
             res = self.client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=4096,
@@ -205,78 +264,54 @@ JSON 응답만: {"projectName":"", "description":"", "features":[], "architectur
                 thinking={"type": "enabled", "budget_tokens": 2000}
             )
             
-            # ThinkingBlock 버그 수정: 안전한 속성 접근
             txt, think = "", ""
             for b in res.content:
-                # ThinkingBlock과 TextBlock 처리
                 if hasattr(b, 'type'):
                     if b.type == "thinking":
-                        # thinking 속성이 있으면 사용, 없으면 text 시도
                         think = getattr(b, 'thinking', getattr(b, 'text', ''))[:200]
                     elif b.type == "text":
                         txt = getattr(b, 'text', '')
             
-            # 캐시 통계
             if hasattr(res, 'usage') and hasattr(res.usage, 'cache_read_input_tokens'):
                 if res.usage.cache_read_input_tokens > 0:
-                    Log.s(f"캐시 읽기: {res.usage.cache_read_input_tokens} 토큰")
+                    Log.s(f"Cache hit: {res.usage.cache_read_input_tokens} tokens")
             
             if think:
-                Log.i(f"AI 사고: {think}...")
+                # thinking 내용을 ASCII 안전하게 출력
+                safe_think = think.encode('ascii', errors='ignore').decode('ascii')
+                Log.i(f"AI thinking: {safe_think[:100]}...")
             
-            # JSON 추출 (강화된 버전)
+            # JSON 추출
             txt = txt.strip()
-            
-            # 마크다운 코드 블록 제거
             if txt.startswith('```'):
                 lines = txt.split('\n')
-                # 첫 줄과 마지막 줄 제거
                 if len(lines) > 2:
                     txt = '\n'.join(lines[1:-1])
                 txt = txt.strip()
             
-            # json 키워드 제거
             if txt.lower().startswith('json'):
                 txt = txt[4:].strip()
             
-            # JSON 파싱 시도 (더 견고하게)
+            # JSON 파싱 시도
             try:
-                # 1차 시도: 직접 파싱
                 return json.loads(txt)
-            except json.JSONDecodeError as je:
-                # 2차 시도: 중괄호로 잘라내기
+            except json.JSONDecodeError:
+                # 중괄호 추출 시도
                 try:
                     start = txt.find('{')
                     end = txt.rfind('}') + 1
                     if start >= 0 and end > start:
-                        clean_json = txt[start:end]
-                        return json.loads(clean_json)
+                        clean = txt[start:end]
+                        return json.loads(clean)
                 except:
                     pass
                 
-                # 3차 시도: description 필드 정리
-                try:
-                    # description에 코드가 들어간 경우 제거
-                    import re
-                    # "description":"..."를 "description":"파일설명"으로 교체
-                    txt = re.sub(
-                        r'"description"\s*:\s*"[^"]*(?:function|var|const|<!DOCTYPE)[^"]*"',
-                        '"description":"파일"',
-                        txt
-                    )
-                    return json.loads(txt)
-                except:
-                    pass
-                
-                Log.e(f"JSON 파싱 실패: {je}")
-                Log.e(f"응답 내용 (처음 500자): {txt[:500]}")
-                Log.w("시뮬레이션 모드로 전환")
+                Log.w("JSON parsing failed - using simulation")
                 return self._sim_analyze(req)
                 
         except Exception as e:
-            Log.e(f'분석 실패: {e}')
-            import traceback
-            traceback.print_exc()
+            error_msg = str(e).encode('ascii', errors='ignore').decode('ascii')
+            Log.e(f'Analysis failed: {error_msg[:100]}')
             return self._sim_analyze(req)
     
     def gen_code(self, analysis, finfo, proj=None):
@@ -285,20 +320,23 @@ JSON 응답만: {"projectName":"", "description":"", "features":[], "architectur
         
         try:
             # ASCII 안전 시스템 프롬프트
-            sys = [{"type": "text", "text": "Code generation AI. Complete working code with Korean comments and error handling. Return ONLY code, no explanations or markdown.", "cache_control": {"type": "ephemeral"}}]
+            sys = [{"type": "text", "text": "Code generation AI. Complete working code with Korean comments and error handling. Return ONLY code without markdown or explanations.", "cache_control": {"type": "ephemeral"}}]
             
             msgs = []
             if proj:
-                # ASCII 안전 컨텍스트
-                ctx = f"Existing code: {proj['code'][:300]}\nIMPORTANT: Keep variable/function names!"
-                msgs.append({"role": "user", "content": [{"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}}]})
-                msgs.append({"role": "assistant", "content": "Will maintain names."})
+                vars_list = ', '.join(proj.get('variables', [])[:5])
+                funcs_list = ', '.join(proj.get('functions', [])[:5])
+                ctx = f"Keep these names: vars={vars_list}, funcs={funcs_list}"
+                msgs.append({"role": "user", "content": ctx})
+                msgs.append({"role": "assistant", "content": "OK"})
             
             # ASCII 안전 프롬프트
-            prompt = f"File: {finfo['name']} ({finfo['type']})\nPurpose: {finfo.get('description', 'Main file')}\nProject: {analysis.get('projectName', 'App')}\n\nReturn pure code only. No markdown or explanations:"
+            proj_name = analysis.get('projectName', 'App').encode('ascii', errors='ignore').decode('ascii')
+            file_desc = finfo.get('description', 'File').encode('ascii', errors='ignore').decode('ascii')
+            prompt = f"File: {finfo['name']} ({finfo['type']})\nPurpose: {file_desc}\nProject: {proj_name}\n\nReturn pure code only:"
             msgs.append({"role": "user", "content": prompt})
             
-            # Extended Thinking (최소 1024 토큰)
+            # API 호출
             res = self.client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=8000,
@@ -307,53 +345,48 @@ JSON 응답만: {"projectName":"", "description":"", "features":[], "architectur
                 thinking={"type": "enabled", "budget_tokens": 1024}
             )
             
-            # ThinkingBlock 버그 수정: 안전한 속성 접근
             code = ""
             for b in res.content:
-                # ThinkingBlock과 TextBlock 올바르게 처리
                 if hasattr(b, 'type'):
                     if b.type == "text":
                         code = getattr(b, 'text', '')
                         break
             
-            # 마크다운 코드 블록 제거
+            # 마크다운 제거
             if code.startswith('```'):
                 lines = code.split('\n')
-                code = '\n'.join(lines[1:-1]) if len(lines) > 2 else code
+                if len(lines) > 2:
+                    code = '\n'.join(lines[1:-1])
             
             return code.strip()
             
         except Exception as e:
-            Log.e(f'코드 생성 실패: {e}')
-            import traceback
-            traceback.print_exc()
+            error_msg = str(e).encode('ascii', errors='ignore').decode('ascii')
+            Log.e(f'Code generation failed: {error_msg[:100]}')
             return self._sim_code(finfo)
-
     
     def _sim_analyze(self, req):
-        """시뮬레이션 분석 - 요구사항에 맞춰 더 정교하게"""
-        Log.i('시뮬레이션 모드')
+        """향상된 시뮬레이션 분석"""
+        Log.i('Simulation mode')
         time.sleep(0.5)
         
-        # 요구사항에서 키워드 추출
         req_lower = req.lower()
         
-        # 프로젝트명 추론
         if 'todo' in req_lower or '할 일' in req_lower or '할일' in req_lower:
             project_name = 'Todo Manager'
-            features = ['할 일 추가/삭제', '완료 체크', '우선순위 설정', 'Google Sheets 저장', '드래그앤드롭']
+            features = ['Add/Delete tasks', 'Complete checkbox', 'Priority setting', 'Google Sheets save', 'Drag and drop']
         elif 'diary' in req_lower or '일기' in req_lower:
-            project_name = 'AI 일기장'
-            features = ['일기 작성', 'AI 감정 분석', '월별 통계', '감정 그래프', '일기 검색']
+            project_name = 'AI Diary'
+            features = ['Write diary', 'AI emotion analysis', 'Monthly stats', 'Emotion graph', 'Search diary']
         elif 'receipt' in req_lower or '영수증' in req_lower:
-            project_name = '영수증 관리'
-            features = ['영수증 촬영', 'OCR 인식', '자동 분류', '월별 통계', '카테고리별 분석']
+            project_name = 'Receipt Manager'
+            features = ['Photo capture', 'OCR recognition', 'Auto categorization', 'Monthly stats', 'Category analysis']
         elif 'expense' in req_lower or '가계부' in req_lower or '지출' in req_lower:
-            project_name = '스마트 가계부'
-            features = ['수입/지출 입력', '카테고리 분류', '월별 통계', '예산 관리', '지출 알림']
+            project_name = 'Smart Budget'
+            features = ['Income/Expense input', 'Category classification', 'Monthly stats', 'Budget management', 'Expense alerts']
         else:
-            project_name = '맞춤 앱'
-            features = ['데이터 입력', '저장 기능', '통계 보기', '모바일 최적화']
+            project_name = 'Custom App'
+            features = ['Data input', 'Save function', 'View statistics', 'Mobile optimized']
         
         return {
             'projectName': project_name,
@@ -363,33 +396,33 @@ JSON 응답만: {"projectName":"", "description":"", "features":[], "architectur
                 'frontend': 'HTML5, CSS3, JavaScript',
                 'backend': 'Google Apps Script',
                 'storage': 'Google Sheets',
-                'ui': '반응형 모바일 UI'
+                'ui': 'Responsive Mobile UI'
             },
             'files': [
-                {'name': 'Code.js', 'type': 'gas', 'description': '백엔드 로직'},
-                {'name': 'Index.html', 'type': 'html', 'description': 'UI 인터페이스'}
+                {'name': 'Code.js', 'type': 'gas', 'description': 'Backend logic'},
+                {'name': 'Index.html', 'type': 'html', 'description': 'UI interface'}
             ],
-            'testCases': [{'name': '기본 테스트', 'description': '기능 확인', 'steps': ['입력', '저장', '조회']}],
+            'testCases': [{'name': 'Basic test', 'description': 'Function check', 'steps': ['Input', 'Save', 'View']}],
             'deploymentConfig': {'access': 'ANYONE', 'executeAs': 'USER_DEPLOYING'}
         }
-        
+    
     def _sim_code(self, finfo):
-        """시뮬레이션 코드 생성 - 더 완성도 있는 템플릿"""
+        """향상된 시뮬레이션 코드 생성"""
         time.sleep(0.3)
         
         if finfo['type'] == 'gas':
-            return f"""// {finfo['name']} - 백엔드 로직
-// Google Apps Script 서버 사이드 코드
+            return """// Backend Logic - Google Apps Script
+// 한글 주석: 서버 사이드 코드
 
-function doGet() {{
+function doGet() {
   // 웹앱 UI 표시
   return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('앱')
+    .setTitle('App')
     .setFaviconUrl('https://www.gstatic.com/images/branding/product/1x/apps_script_48dp.png');
-}}
+}
 
-function saveData(data) {{
-  try {{
+function saveData(data) {
+  try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     var timestamp = new Date();
     
@@ -398,121 +431,102 @@ function saveData(data) {{
       timestamp,
       JSON.stringify(data),
       data.title || '',
-      data.status || 'pending'
+      data.status || 'active'
     ]);
     
-    return {{
+    return {
       success: true,
-      message: '저장 완료',
+      message: 'Saved successfully',
       timestamp: timestamp.toISOString()
-    }};
-  }} catch(e) {{
-    Logger.log('저장 오류: ' + e.toString());
-    return {{
+    };
+  } catch(e) {
+    Logger.log('Save error: ' + e.toString());
+    return {
       success: false,
       error: e.toString()
-    }};
-  }}
-}}
+    };
+  }
+}
 
-function loadData() {{
-  try {{
+function loadData() {
+  try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     var data = sheet.getDataRange().getValues();
     
     // 헤더 제외
-    if (data.length > 1) {{
+    if (data.length > 1) {
       data = data.slice(1);
-    }}
+    }
     
-    return {{
+    return {
       success: true,
-      data: data.map(function(row) {{
-        return {{
+      data: data.map(function(row) {
+        return {
           timestamp: row[0],
           content: row[1],
           title: row[2],
           status: row[3]
-        }};
-      }})
-    }};
-  }} catch(e) {{
-    Logger.log('로드 오류: ' + e.toString());
-    return {{
+        };
+      })
+    };
+  } catch(e) {
+    Logger.log('Load error: ' + e.toString());
+    return {
       success: false,
       error: e.toString()
-    }};
-  }}
-}}
-
-function deleteData(rowIndex) {{
-  try {{
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    sheet.deleteRow(rowIndex + 2); // +2: 헤더 + 0-based index
-    
-    return {{
-      success: true,
-      message: '삭제 완료'
-    }};
-  }} catch(e) {{
-    return {{
-      success: false,
-      error: e.toString()
-    }};
-  }}
-}}"""
+    };
+  }
+}"""
         else:
-            return f"""<!DOCTYPE html>
+            return """<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>앱</title>
+    <title>App</title>
     <style>
-        * {{
+        * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
-        }}
+        }
         
-        body {{
+        body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
-        }}
+        }
         
-        .container {{
+        .container {
             max-width: 800px;
             margin: 0 auto;
             background: white;
             border-radius: 20px;
             padding: 30px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-        }}
+        }
         
-        h1 {{
+        h1 {
             color: #667eea;
             margin-bottom: 30px;
-            font-size: 28px;
             text-align: center;
-        }}
+        }
         
-        .input-group {{
+        .input-group {
             margin-bottom: 20px;
-        }}
+        }
         
-        label {{
+        label {
             display: block;
             font-weight: 600;
             margin-bottom: 8px;
             color: #333;
-        }}
+        }
         
-        input[type="text"], textarea {{
+        input[type="text"], textarea {
             width: 100%;
             padding: 15px;
             border: 2px solid #e0e0e0;
@@ -520,20 +534,20 @@ function deleteData(rowIndex) {{
             font-size: 16px;
             transition: all 0.3s;
             font-family: inherit;
-        }}
+        }
         
-        input:focus, textarea:focus {{
+        input:focus, textarea:focus {
             outline: none;
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }}
+        }
         
-        textarea {{
+        textarea {
             min-height: 120px;
             resize: vertical;
-        }}
+        }
         
-        .btn {{
+        .btn {
             width: 100%;
             padding: 18px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -543,285 +557,163 @@ function deleteData(rowIndex) {{
             font-size: 16px;
             font-weight: 700;
             cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: transform 0.2s;
             margin-top: 10px;
-        }}
+        }
         
-        .btn:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-        }}
+        .btn:active:not(:disabled) {
+            transform: scale(0.98);
+        }
         
-        .btn:active {{
-            transform: translateY(0);
-        }}
-        
-        .btn:disabled {{
+        .btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
-        }}
+        }
         
-        .btn-secondary {{
-            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
-        }}
-        
-        .status {{
+        .status {
             margin-top: 20px;
             padding: 15px;
             border-radius: 12px;
             display: none;
-            animation: fadeIn 0.3s;
-        }}
+        }
         
-        .status.success {{
+        .status.success {
             background: #d4edda;
             color: #155724;
-            border: 2px solid #c3e6cb;
-        }}
+        }
         
-        .status.error {{
+        .status.error {
             background: #f8d7da;
             color: #721c24;
-            border: 2px solid #f5c6cb;
-        }}
+        }
         
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(-10px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
-        
-        .items {{
-            margin-top: 30px;
-        }}
-        
-        .item {{
-            background: #f8f9ff;
-            padding: 15px;
-            border-radius: 12px;
-            margin-bottom: 10px;
-            border: 2px solid #e0e0e0;
-        }}
-        
-        .item-title {{
-            font-weight: 700;
-            color: #667eea;
-            margin-bottom: 5px;
-        }}
-        
-        .item-content {{
-            color: #666;
-            font-size: 14px;
-        }}
-        
-        .loading {{
-            text-align: center;
-            padding: 20px;
-            color: #667eea;
-        }}
-        
-        @media (max-width: 768px) {{
-            .container {{
+        @media (max-width: 768px) {
+            .container {
                 padding: 20px;
-            }}
-            h1 {{
-                font-size: 24px;
-            }}
-        }}
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎉 앱이 생성되었습니다</h1>
+        <h1>🎉 App Generated Successfully</h1>
         
         <div class="input-group">
-            <label>📝 제목</label>
-            <input type="text" id="title" placeholder="제목을 입력하세요">
+            <label>📝 Title</label>
+            <input type="text" id="title" placeholder="Enter title">
         </div>
         
         <div class="input-group">
-            <label>📄 내용</label>
-            <textarea id="content" placeholder="내용을 입력하세요"></textarea>
+            <label>📄 Content</label>
+            <textarea id="content" placeholder="Enter content"></textarea>
         </div>
         
-        <button class="btn" onclick="save()">💾 저장</button>
-        <button class="btn btn-secondary" onclick="load()">📋 불러오기</button>
+        <button class="btn" onclick="save()">💾 Save</button>
+        <button class="btn" style="background: linear-gradient(135deg, #6c757d 0%, #495057 100%);" onclick="load()">📋 Load</button>
         
         <div id="status" class="status"></div>
-        
-        <div id="items" class="items"></div>
     </div>
     
     <script>
-        function save() {{
+        function save() {
             const title = document.getElementById('title').value;
             const content = document.getElementById('content').value;
             
-            if (!title || !content) {{
-                showStatus('제목과 내용을 모두 입력해주세요', 'error');
+            if (!title || !content) {
+                showStatus('Please enter both title and content', 'error');
                 return;
-            }}
+            }
             
             const btn = event.target;
             btn.disabled = true;
-            btn.textContent = '저장 중...';
+            btn.textContent = 'Saving...';
             
             google.script.run
-                .withSuccessHandler(function(result) {{
+                .withSuccessHandler(function(result) {
                     btn.disabled = false;
-                    btn.textContent = '💾 저장';
+                    btn.textContent = '💾 Save';
                     
-                    if (result.success) {{
+                    if (result.success) {
                         showStatus('✅ ' + result.message, 'success');
                         document.getElementById('title').value = '';
                         document.getElementById('content').value = '';
-                        load();
-                    }} else {{
+                    } else {
                         showStatus('❌ ' + result.error, 'error');
-                    }}
-                }})
-                .withFailureHandler(function(error) {{
+                    }
+                })
+                .withFailureHandler(function(error) {
                     btn.disabled = false;
-                    btn.textContent = '💾 저장';
-                    showStatus('❌ 오류: ' + error, 'error');
-                }})
-                .saveData({{
+                    btn.textContent = '💾 Save';
+                    showStatus('❌ Error: ' + error, 'error');
+                })
+                .saveData({
                     title: title,
                     content: content,
-                    status: 'active',
-                    timestamp: new Date().toISOString()
-                }});
-        }}
+                    status: 'active'
+                });
+        }
         
-        function load() {{
-            const itemsDiv = document.getElementById('items');
-            itemsDiv.innerHTML = '<div class="loading">📥 데이터 로딩 중...</div>';
-            
+        function load() {
             google.script.run
-                .withSuccessHandler(function(result) {{
-                    if (result.success) {{
-                        if (result.data && result.data.length > 0) {{
-                            let html = '<h3 style="margin-bottom: 15px; color: #667eea;">📋 저장된 항목</h3>';
-                            result.data.reverse().forEach(function(item, index) {{
-                                html += `
-                                    <div class="item">
-                                        <div class="item-title">${{item.title || '제목 없음'}}</div>
-                                        <div class="item-content">${{item.content || ''}}</div>
-                                    </div>
-                                `;
-                            }});
-                            itemsDiv.innerHTML = html;
-                        }} else {{
-                            itemsDiv.innerHTML = '<div class="loading">📭 저장된 항목이 없습니다</div>';
-                        }}
-                    }} else {{
-                        itemsDiv.innerHTML = '<div class="loading">❌ ' + result.error + '</div>';
-                    }}
-                }})
-                .withFailureHandler(function(error) {{
-                    itemsDiv.innerHTML = '<div class="loading">❌ 오류: ' + error + '</div>';
-                }})
+                .withSuccessHandler(function(result) {
+                    if (result.success && result.data) {
+                        console.log('Loaded:', result.data);
+                        showStatus('✅ Data loaded successfully', 'success');
+                    } else {
+                        showStatus('❌ ' + (result.error || 'No data'), 'error');
+                    }
+                })
+                .withFailureHandler(function(error) {
+                    showStatus('❌ Error: ' + error, 'error');
+                })
                 .loadData();
-        }}
+        }
         
-        function showStatus(message, type) {{
+        function showStatus(message, type) {
             const status = document.getElementById('status');
             status.textContent = message;
             status.className = 'status ' + type;
             status.style.display = 'block';
             
-            setTimeout(function() {{
+            setTimeout(function() {
                 status.style.display = 'none';
-            }}, 3000);
-        }}
-        
-        // 페이지 로드 시 데이터 불러오기
-        window.onload = function() {{
-            load();
-        }};
+            }, 3000);
+        }
     </script>
 </body>
 </html>"""
 
 # ============================================================
-# 배포 관리자 (Clasp)
+# 배포 관리자
 # ============================================================
 class DeployManager:
     def __init__(self, pdir):
         self.pdir = Path(pdir)
     
     def run_tests(self):
-        """Clasp 테스트 실행"""
-        Log.i('테스트 실행')
+        Log.i('Running tests')
         try:
-            # Clasp 확인
             if subprocess.run(['clasp', '--version'], capture_output=True).returncode != 0:
-                Log.w('Clasp 미설치 - 테스트 스킵')
+                Log.w('Clasp not installed - skipping tests')
                 return True
             
-            # 푸시
             res = subprocess.run(['clasp', 'push', '--force'], cwd=self.pdir, capture_output=True, text=True)
             if res.returncode != 0:
-                Log.e(f'푸시 실패: {res.stderr}')
+                Log.e(f'Push failed: {res.stderr}')
                 return False
             
-            # 테스트 실행
             res = subprocess.run(['clasp', 'run', 'testAll'], cwd=self.pdir, capture_output=True, text=True, timeout=60)
             if res.returncode == 0:
-                Log.s('테스트 통과')
+                Log.s('Tests passed')
                 return True
             else:
-                Log.w('테스트 실패')
+                Log.w('Tests failed')
                 return False
         except FileNotFoundError:
-            Log.w('Clasp 미설치')
-            return True
-        except subprocess.TimeoutExpired:
-            Log.w('테스트 타임아웃')
-            return False
-        except Exception as e:
-            Log.e(f'테스트 오류: {e}')
-            return False
-    
-    def deploy(self):
-        """Clasp 배포"""
-        Log.i('배포 중')
-        try:
-            # Clasp 확인
-            if subprocess.run(['clasp', '--version'], capture_output=True).returncode != 0:
-                Log.w('Clasp 미설치 - 수동 배포 필요')
-                return None
-            
-            # .clasp.json 확인
-            if not (self.pdir / '.clasp.json').exists():
-                Log.w('.clasp.json 없음 - clasp create 필요')
-                return None
-            
-            # 푸시
-            subprocess.run(['clasp', 'push', '--force'], cwd=self.pdir, check=True, capture_output=True)
-            
-            # 배포
-            res = subprocess.run(
-                ['clasp', 'deploy', '--description', f'Auto {datetime.now():%Y%m%d_%H%M%S}'],
-                cwd=self.pdir, capture_output=True, text=True
-            )
-            
-            if res.returncode != 0:
-                Log.e(f'배포 실패: {res.stderr}')
-                return None
-            
-            # URL 추출
-            for line in res.stdout.split('\n'):
-                if 'https://script.google.com' in line:
-                    Log.s('배포 완료')
-                    return line.strip()
-            
-            Log.w('배포 URL 없음')
-            return None
-        except FileNotFoundError:
-            Log.w('Clasp 미설치')
+            Log.w('Clasp not installed')
             return None
         except Exception as e:
-            Log.e(f'배포 오류: {e}')
+            Log.e(f'Deploy error: {e}')
             return None
 
 # ============================================================
@@ -837,48 +729,41 @@ class ProjectGen:
         
         progress_store[sid] = {
             'running': True, 'step': 0, 'total': 7,
-            'message': '준비...', 'result': None, 'start': time.time()
+            'message': 'Preparing...', 'result': None, 'start': time.time()
         }
     
     def update(self, step, msg=None):
-        msgs = ['분석', '설계', '코드생성', '테스트', '설정', '저장', '완료']
+        msgs = ['Analysis', 'Design', 'Code Generation', 'Testing', 'Configuration', 'Saving', 'Complete']
         progress_store[self.sid].update({'step': step, 'message': msg or msgs[step-1] if step<=len(msgs) else ''})
         Log.i(f'[{self.sid[:8]}] {msg or msgs[step-1] if step<=len(msgs) else ""}')
     
     def run(self):
         try:
-            # 캐시 확인
             ck = cache_key(self.req)
             cached = get_cache(ck)
             if cached:
-                self.update(7, '캐시 로드')
+                self.update(7, 'Cache loaded')
                 time.sleep(1)
                 return cached
             
-            # 기존 프로젝트 로드 (수정 모드)
             proj_state = ProjectState.load(self.proj_id) if self.proj_id else None
             
-            # Step 1: 분석
             self.update(1)
             analysis = self.api.analyze(self.req, proj_state)
             
-            # Step 2: 설계
             self.update(2)
             time.sleep(0.5)
             
-            # Step 3: 코드 생성
             self.update(3)
             codes = {}
             for i, fi in enumerate(analysis['files'], 1):
-                self.update(3, f"코드생성 ({i}/{len(analysis['files'])}): {fi['name']}")
+                self.update(3, f"Code Generation ({i}/{len(analysis['files'])}): {fi['name']}")
                 codes[fi['name']] = self.api.gen_code(analysis, fi, proj_state)
                 time.sleep(1)
             
-            # Step 4: 테스트
             self.update(4)
-            codes['Test.js'] = "// 테스트\nfunction testAll() { Logger.log('테스트'); }"
+            codes['Test.js'] = "// Test\nfunction testAll() { Logger.log('Test complete'); }"
             
-            # Step 5: 설정
             self.update(5)
             codes['appsscript.json'] = json.dumps({
                 "timeZone": "Asia/Seoul", "runtimeVersion": "V8",
@@ -886,26 +771,22 @@ class ProjectGen:
                 "oauthScopes": ["https://www.googleapis.com/auth/spreadsheets"]
             }, indent=2)
             
-            codes['README.md'] = f"# {analysis['projectName']}\n{analysis['description']}\n\n배포: https://script.google.com"
+            codes['README.md'] = f"# {analysis['projectName']}\n{analysis['description']}\n\nDeploy: https://script.google.com"
             
-            # Step 6: 저장
             self.update(6)
             pdir = Config.OUTPUT_DIR / self.sid
             pdir.mkdir(exist_ok=True)
             for fn, code in codes.items():
                 (pdir / fn).write_text(code, encoding='utf-8')
             
-            # 변수/함수명 추출
             main_code = codes.get('Code.js', '')
             vars, funcs = ProjectState.extract(main_code)
             
-            # 프로젝트 저장 (SQLite)
             if not self.proj_id:
                 self.proj_id = hashlib.md5(self.req.encode()).hexdigest()[:12]
             
             ProjectState.save(self.proj_id, analysis['projectName'][:50], main_code, vars, funcs)
             
-            # Step 7: 배포 (선택)
             self.update(7)
             deploy_url = None
             
@@ -913,18 +794,18 @@ class ProjectGen:
                 deployer = DeployManager(pdir)
                 test_ok = deployer.run_tests()
                 if not test_ok:
-                    Log.w('테스트 실패 - 배포 계속')
+                    Log.w('Tests failed - continuing deployment')
                 deploy_url = deployer.deploy()
             
             elapsed = time.time() - progress_store[self.sid]['start']
             
-            Log.s(f'완료! {elapsed:.1f}초')
-            Log.i(f'프로젝트: {pdir}')
-            Log.i(f'파일: {len(codes)}개')
+            Log.s(f'Complete! {elapsed:.1f}s')
+            Log.i(f'Project: {pdir}')
+            Log.i(f'Files: {len(codes)}')
             if deploy_url:
-                Log.s(f'배포 URL: {deploy_url}')
+                Log.s(f'Deployed: {deploy_url}')
             else:
-                Log.i('수동 배포: cd ' + str(pdir) + ' && clasp deploy')
+                Log.i('Manual deploy: cd ' + str(pdir) + ' && clasp deploy')
             
             result = {
                 'success': True,
@@ -950,7 +831,7 @@ class ProjectGen:
             return result
             
         except Exception as e:
-            Log.e(f'오류: {e}')
+            Log.e(f'Error: {e}')
             import traceback
             traceback.print_exc()
             return {'success': False, 'error': str(e)}
@@ -974,11 +855,11 @@ def api_gen():
     req = data.get('requirements', '')
     key = data.get('api_key') or Config.CLAUDE_API_KEY
     sid = data.get('session_id', gen_sid())
-    proj_id = data.get('project_id')  # 수정 모드
-    skip_tests = data.get('skip_tests', True)  # 기본 테스트 스킵
+    proj_id = data.get('project_id')
+    skip_tests = data.get('skip_tests', True)
     
-    if not req: return jsonify({'error': '요구사항 누락'}), 400
-    if not key: return jsonify({'error': 'API 키 필요'}), 400
+    if not req: return jsonify({'error': 'Requirements missing'}), 400
+    if not key: return jsonify({'error': 'API key required'}), 400
     
     ck = cache_key(req)
     cached = get_cache(ck)
@@ -998,7 +879,7 @@ def api_prog():
 def api_dl():
     sid = request.args.get('session_id', '')
     pdir = Config.OUTPUT_DIR / sid
-    if not pdir.exists(): return jsonify({'error': '없음'}), 404
+    if not pdir.exists(): return jsonify({'error': 'Not found'}), 404
     
     mf = io.BytesIO()
     with zipfile.ZipFile(mf, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1014,15 +895,15 @@ def api_projs():
 @app.route('/api/project/<pid>')
 def api_proj(pid):
     state = ProjectState.load(pid)
-    if not state: return jsonify({'error': '없음'}), 404
+    if not state: return jsonify({'error': 'Not found'}), 404
     return jsonify(state)
 
 @app.route('/api/health')
 def api_health():
     return jsonify({
         'status': 'healthy',
-        'version': '4.1.0',
-        'features': ['Caching', 'Thinking', 'SQLite', 'CLI', 'ThinkingBlock Fixed'],
+        'version': '4.2.0',
+        'features': ['Caching', 'Thinking', 'SQLite', 'CLI', 'ASCII-Safe'],
         'api_configured': bool(Config.CLAUDE_API_KEY)
     })
 
@@ -1030,21 +911,20 @@ def api_health():
 # CLI 모드
 # ============================================================
 def run_cli(args):
-    print(f"\n{'='*60}\n{C.BOLD}🚀 AI 자동 개발 v4.1{C.E}\n{'='*60}\n")
+    print(f"\n{'='*60}\n{C.BOLD}🚀 AI Auto Dev v4.2{C.E}\n{'='*60}\n")
     
     key = args.api_key or Config.CLAUDE_API_KEY
     if not key:
-        Log.e("API 키 필요")
+        Log.e("API key required")
         sys.exit(1)
     
     if not args.requirements or not os.path.exists(args.requirements):
-        Log.e("요구사항 파일 필요")
+        Log.e("Requirements file required")
         sys.exit(1)
     
     req = open(args.requirements, encoding='utf-8').read()
     sid = gen_sid()
     
-    # CLI에서는 배포 옵션 사용 가능
     skip_tests = args.skip_tests if hasattr(args, 'skip_tests') else False
     
     gen = ProjectGen(sid, req, key, skip_tests=skip_tests)
@@ -1052,7 +932,109 @@ def run_cli(args):
     
     print(f"\n{'='*60}")
     if result['success']:
-        print(f"{C.G}{C.BOLD}✅ 완료{C.E}\n{'='*60}")
+        print(f"{C.G}{C.BOLD}✅ Complete{C.E}\n{'='*60}")
         print(f"\n📁 {Config.OUTPUT_DIR / sid}")
-        print(f"📄 파일: {len(result['files'])}")
-        print(f"⏱️  {result['elapsed_time']:.1f}초")
+        print(f"📄 Files: {len(result['files'])}")
+        print(f"⏱️  {result['elapsed_time']:.1f}s")
+        
+        if result.get('deployment_url'):
+            print(f"🌐 Deployed: {result['deployment_url']}")
+        
+        sys.exit(0)
+    else:
+        print(f"{C.R}{C.BOLD}❌ Failed{C.E}\n{'='*60}")
+        print(f"\n{result.get('error', 'Unknown error')}")
+        sys.exit(1)
+
+# ============================================================
+# 메인
+# ============================================================
+def main():
+    parser = argparse.ArgumentParser(description='AI Auto Dev Platform v4.2')
+    parser.add_argument('--cli', action='store_true', help='CLI mode')
+    parser.add_argument('--requirements', help='Requirements file')
+    parser.add_argument('--api-key', help='API key')
+    parser.add_argument('--port', type=int, help='Port')
+    parser.add_argument('--skip-tests', action='store_true', help='Skip tests/deployment')
+    args = parser.parse_args()
+    
+    if args.cli:
+        run_cli(args)
+        return
+    
+    port = args.port or Config.PORT
+    print(f"\n{'='*60}\n{C.BOLD}🚀 AI Auto Dev v4.2{C.E}\n{'='*60}")
+    print(f"\n✅ http://{Config.HOST}:{port}")
+    print(f"✅ Output: {Config.OUTPUT_DIR}")
+    
+    if Config.CLAUDE_API_KEY:
+        k = Config.CLAUDE_API_KEY
+        print(f"✅ API: {k[:10]}...{k[-4:]}")
+    else:
+        print(f"⚠️  API not configured")
+    
+    try:
+        if subprocess.run(['clasp', '--version'], capture_output=True).returncode == 0:
+            print(f"✅ Clasp: Installed (deployment available)")
+        else:
+            print(f"⚠️  Clasp: Not installed (manual deployment only)")
+    except FileNotFoundError:
+        print(f"⚠️  Clasp: Not installed (manual deployment only)")
+    
+    print(f"\n💡 Features:")
+    print(f"  🔥 Prompt Caching (90% cost reduction)")
+    print(f"  🧠 Extended Thinking (accurate code)")
+    print(f"  💾 SQLite (project history)")
+    print(f"  🔄 Variable/function name preservation")
+    print(f"  🚀 Clasp auto deployment")
+    print(f"  🌐 ASCII-safe encoding")
+    print(f"\n📦 Install: npm install -g @google/clasp")
+    print(f"{'='*60}\n")
+    
+    app.run(debug=Config.DEBUG, host=Config.HOST, port=port, threaded=True)
+
+if __name__ == '__main__':
+    main()
+
+if __name__ != '__main__':
+    port = int(os.getenv('PORT', 5000))
+    Log.i(f'Gunicorn mode: port {port}'):
+            Log.w('Clasp not installed')
+            return True
+        except subprocess.TimeoutExpired:
+            Log.w('Test timeout')
+            return False
+        except Exception as e:
+            Log.e(f'Test error: {e}')
+            return False
+    
+    def deploy(self):
+        Log.i('Deploying')
+        try:
+            if subprocess.run(['clasp', '--version'], capture_output=True).returncode != 0:
+                Log.w('Clasp not installed - manual deployment required')
+                return None
+            
+            if not (self.pdir / '.clasp.json').exists():
+                Log.w('.clasp.json missing - run clasp create first')
+                return None
+            
+            subprocess.run(['clasp', 'push', '--force'], cwd=self.pdir, check=True, capture_output=True)
+            
+            res = subprocess.run(
+                ['clasp', 'deploy', '--description', f'Auto {datetime.now():%Y%m%d_%H%M%S}'],
+                cwd=self.pdir, capture_output=True, text=True
+            )
+            
+            if res.returncode != 0:
+                Log.e(f'Deploy failed: {res.stderr}')
+                return None
+            
+            for line in res.stdout.split('\n'):
+                if 'https://script.google.com' in line:
+                    Log.s('Deployed successfully')
+                    return line.strip()
+            
+            Log.w('No deployment URL')
+            return None
+        except FileNotFoundError
