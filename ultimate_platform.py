@@ -608,7 +608,9 @@ def main():
 if __name__ == '__main__':
     main()
 
-# Gunicorn support
+# Gunicorn support (Railway용)
 if __name__ != '__main__':
-    port = int(os.getenv('PORT', 5000))
+    # Gunicorn이 앱을 실행할 때
+    port = int(os.getenv('PORT', 8080))
     Log.i(f'Gunicorn mode: port {port}')
+    # app 객체를 그대로 노출 (Gunicorn이 사용)
