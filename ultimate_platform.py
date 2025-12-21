@@ -4,15 +4,30 @@
 AI 자동 개발 플랫폼 v4.2 (ASCII 인코딩 완전 수정)
 """
 
-import os, sys, json, time, secrets, hashlib, threading, zipfile, io, subprocess, argparse, re, sqlite3, base64
+import os, sys, json, time, secrets, hashlib, threading, zipfile, io, subprocess, argparse, re, sqlite3, base64, logging
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, send_from_directory, request, jsonify, send_file
 
-# UTF-8 강제 설정
-if sys.version_info[0] >= 3:
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+# 로깅 설정 (Railway에서 확실하게 보이도록)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
+
+# UTF-8 강제 설정 (Railway 환경에서 안전하게)
+try:
+    if sys.version_info[0] >= 3 and hasattr(sys.stdout, 'buffer'):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+except Exception:
+    pass  # Gunicorn 환경에서는 이미 설정되어 있을 수 있음
+
+logger.info("=" * 60)
+logger.info("🚀 AI Auto Dev Platform v4.2 Starting...")
+logger.info("=" * 60)
 
 # ============================================================
 # 설정
@@ -20,17 +35,18 @@ if sys.version_info[0] >= 3:
 class Config:
     SECRET_KEY = os.urandom(24)
     DEBUG = False
-    PORT = int(os.getenv('PORT', 5000))
+    PORT = int(os.getenv('PORT', 8080))  # Railway 기본 포트
     HOST = '0.0.0.0'
     OUTPUT_DIR = Path('./output')
     CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY', os.getenv('CLAUDE_API_KEY', ''))
     if not CLAUDE_API_KEY:
-        CLAUDE_API_KEY = 'sk-ant-api03-키입력'
+        CLAUDE_API_KEY = ''  # 빈 문자열로 설정
     API_TIMEOUT = 120
     CACHE_ENABLED = True
     CACHE_TTL = 3600
 
-Config.OUTPUT_DIR.mkdir(exist_ok=True)
+logger.info(f"✅ Config loaded - Port: {Config.PORT}")
+logger.info(f"✅ API Key: {'CONFIGURED' if Config.CLAUDE_API_KEY else 'NOT SET'}")
 
 # ============================================================
 # 로그
@@ -52,15 +68,23 @@ class Log:
 # SQLite
 # ============================================================
 def init_db():
-    conn = sqlite3.connect('projects.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS projects
-                 (id TEXT PRIMARY KEY, name TEXT, code TEXT, variables TEXT,
-                  functions TEXT, history TEXT, created_at TEXT, updated_at TEXT)''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('projects.db')
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS projects
+                     (id TEXT PRIMARY KEY, name TEXT, code TEXT, variables TEXT,
+                      functions TEXT, history TEXT, created_at TEXT, updated_at TEXT)''')
+        conn.commit()
+        conn.close()
+        logger.info("✅ Database initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Database init failed: {e}")
 
-init_db()
+# 안전하게 초기화
+try:
+    init_db()
+except Exception as e:
+    logger.error(f"❌ Failed to initialize database: {e}")
 
 class ProjectState:
     @staticmethod
@@ -113,10 +137,19 @@ class ProjectState:
 # ============================================================
 # Flask
 # ============================================================
+try:
+    Config.OUTPUT_DIR.mkdir(exist_ok=True)
+    logger.info(f"✅ Output directory: {Config.OUTPUT_DIR}")
+except Exception as e:
+    logger.error(f"❌ Failed to create output directory: {e}")
+
 app = Flask(__name__)
 app.config.from_object(Config)
 progress_store = {}
 cache_store = {}
+
+logger.info("✅ Flask app initialized successfully")
+logger.info("=" * 60)
 
 def gen_sid(): return f"{int(time.time())}_{secrets.token_hex(8)}"
 def cache_key(req): return hashlib.sha256(req.encode()).hexdigest()
@@ -605,12 +638,59 @@ def main():
     
     app.run(debug=Config.DEBUG, host=Config.HOST, port=port, threaded=True)
 
-if __name__ == '__main__':
-    main()
+# ============================================================
+# Main
+# ============================================================
+def main():
+    parser = argparse.ArgumentParser(description='AI Auto Dev v4.2')
+    parser.add_argument('--cli', action='store_true', help='CLI mode')
+    parser.add_argument('--requirements', help='Requirements file')
+    parser.add_argument('--api-key', help='API key')
+    parser.add_argument('--port', type=int, help='Port')
+    parser.add_argument('--skip-tests', action='store_true', help='Skip tests')
+    args = parser.parse_args()
+    
+    if args.cli:
+        run_cli(args)
+        return
+    
+    port = args.port or Config.PORT
+    print(f"\n{'='*60}\n🚀 AI Auto Dev v4.2\n{'='*60}")
+    print(f"\n✅ http://{Config.HOST}:{port}")
+    print(f"✅ Output: {Config.OUTPUT_DIR}")
+    
+    if Config.CLAUDE_API_KEY:
+        k = Config.CLAUDE_API_KEY
+        print(f"✅ API: {k[:10]}...{k[-4:]}")
+    else:
+        print(f"⚠️  API not configured")
+    
+    try:
+        if subprocess.run(['clasp', '--version'], capture_output=True).returncode == 0:
+            print(f"✅ Clasp: Installed")
+        else:
+            print(f"⚠️  Clasp: Not installed")
+    except FileNotFoundError:
+        print(f"⚠️  Clasp: Not installed")
+    except Exception:
+        print(f"⚠️  Clasp: Not available")
+    
+    print(f"\n💡 Features:")
+    print(f"  🔥 Prompt Caching (90% cost reduction)")
+    print(f"  🧠 Extended Thinking")
+    print(f"  💾 SQLite history")
+    print(f"  🔄 Variable/function preservation")
+    print(f"  🌐 ASCII-safe encoding")
+    print(f"\n{'='*60}\n")
+    
+    app.run(debug=Config.DEBUG, host=Config.HOST, port=port, threaded=True)
 
-# Gunicorn support (Railway용)
-if __name__ != '__main__':
-    # Gunicorn이 앱을 실행할 때
-    port = int(os.getenv('PORT', 8080))
-    Log.i(f'Gunicorn mode: port {port}')
-    # app 객체를 그대로 노출 (Gunicorn이 사용)
+if __name__ == '__main__':
+    logger.info("🔥 Starting in direct mode (not Gunicorn)")
+    main()
+else:
+    # Gunicorn이 이 모듈을 import할 때
+    logger.info("=" * 60)
+    logger.info(f"🚀 Gunicorn mode - Port: {os.getenv('PORT', 8080)}")
+    logger.info("✅ Flask app ready for requests")
+    logger.info("=" * 60)
