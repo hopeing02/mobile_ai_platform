@@ -1,0 +1,69 @@
+name: Deploy and Auto-Fix Google Apps Script
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          npm install -g @google/clasp
+          pip install anthropic
+      
+      - name: Setup clasp credentials
+        run: |
+          echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+      
+      - name: Initial deployment
+        run: clasp push --force
+      
+      - name: Run AI Auto-Fix System
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python auto_fix.py
+        continue-on-error: false
+      
+      - name: Commit fixes if any
+        if: success()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git diff --quiet && git diff --staged --quiet || \
+          (git commit -m "🤖 AI auto-fix applied" && git push)
+      
+      - name: Create deployment
+        if: success()
+        run: |
+          VERSION=$(clasp version "Auto deploy with fixes ${{ github.sha }}" | grep -oP '(?<=Created version )\d+')
+          clasp deploy --versionNumber $VERSION \
+                       --description "GitHub Actions with AI fixes"
+      
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ 배포 성공! 모든 테스트 통과"
+          clasp deployments
+      
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "❌ 자동 수정 실패 - 이슈 생성 필요"
